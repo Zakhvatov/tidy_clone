@@ -1,0 +1,373 @@
+Живая проверка T5/T6 — curl по basket-*.wbbasket.ru
+Дата: 2026-10-13T23:09:39Z
+Проверенные nmId: 16020837 (брошь), 14058746 (платье-пакшот), 14058741 (фото на модели)
+
+################################################################
+# nm=16020837  vol=160  part=16020
+################################################################
+
+--- Подбор basket NN (HTTP-код на card.json) ---
+basket-01  404  https://basket-01.wbbasket.ru/vol160/part16020/16020837/info/ru/card.json
+basket-02  200  https://basket-02.wbbasket.ru/vol160/part16020/16020837/info/ru/card.json
+basket-03  404  https://basket-03.wbbasket.ru/vol160/part16020/16020837/info/ru/card.json
+basket-04  404  https://basket-04.wbbasket.ru/vol160/part16020/16020837/info/ru/card.json
+
+--- base = https://basket-02.wbbasket.ru/vol160/part16020/16020837 ---
+
+$ curl -sS -D - "https://basket-02.wbbasket.ru/vol160/part16020/16020837/info/ru/card.json"
+HTTP/2 200 
+content-type: application/json
+last-modified: Sun, 23 Feb 2025 16:35:30 GMT
+etag: "67bb4e52-4c4"
+content-length: 1220
+access-control-allow-origin: *
+access-control-allow-credentials: true
+access-control-allow-headers: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+strict-transport-security: max-age=31536000; preload;
+x-content-type-options: nosniff
+timing-allow-origin: *
+cache-status: MISS
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-02b.el.wb.ru
+cache-control: public, max-age=86400
+status-no-id: smartproxy (mediabasket-basket-02b.el.wb.ru)
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:39 GMT
+
+{"imt_id":144667084,"nm_id":16020837,"imt_name":"Брошь Ягоды, подарок","subj_name":"Броши","subj_root_name":"Бижутерия","vendor_code":"Bro030/бордовый(венокягоды)","kinds":["Женский"],"grouped_options":[{"group_name":"Габариты","options":[{"name":"Ширина предмета","value":"4.5 см"},{"name":"Длина предмета","value":"4 см"}]},{"group_name":"Дополнительная информация","options":[{"name":"Страна производства","value":"Россия"},{"name":"Состав бижутерии","value":"бижутерный сплав"}]}],"options":[{"name":"Ширина предмета","value":"4.5 см"},{"name":"Длина предмета","value":"4 см"},{"name":"Страна производства","value":"Россия"},{"name":"Состав бижутерии","value":"бижутерный сплав"}],"certificate":{},"nm_colors_names":"бордовый, зеленый","contents":"брошь; подарочная упаковка","selling":{"brand_name":"KORALI","supplier_id":44393},"media":{"photo_count":1},"data":{"subject_id":295,"subject_root_id":200,"tech_size":"0"}}
+$ curl -sS -D - "https://basket-02.wbbasket.ru/vol160/part16020/16020837/info/sellers.json"
+HTTP/2 200 
+content-type: application/json
+last-modified: Mon, 07 Sep 2026 06:36:03 GMT
+etag: "6a9e5b53-163"
+content-length: 355
+access-control-allow-origin: *
+access-control-allow-credentials: true
+access-control-allow-headers: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+strict-transport-security: max-age=31536000; preload;
+x-content-type-options: nosniff
+timing-allow-origin: *
+cache-status: MISS
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-02b.el.wb.ru
+cache-control: public, max-age=86400
+status-no-id: smartproxy (mediabasket-basket-02b.el.wb.ru)
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:39 GMT
+
+{"nmId":16020837,"supplierId":44393,"supplierName":"ИП Коренев А. В.","supplierFullName":"Индивидуальный предприниматель Коренев Андрей Витальевич","inn":"233411785531","ogrnip":"317237500264902","countryLocCode":"ru-RU","taxpayerCode":"233411785531","trademark":"KORALIONE","rv":14173969937}
+--- Заголовки фото (images/big/1..2.webp) ---
+$ curl -sS -o /dev/null -D - "https://basket-02.wbbasket.ru/vol160/part16020/16020837/images/big/1.webp"
+HTTP/2 200 
+content-type: image/webp
+last-modified: Tue, 22 Jul 2025 13:05:45 GMT
+etag: "687f8ca9-4ea9e"
+content-length: 322206
+access-control-allow-credentials: true
+access-control-allow-headers: *
+access-control-allow-origin: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-02a.el.wb.ru
+cache-control: public, max-age=86400
+cache-status: MISS
+timing-allow-origin: *
+status-no-id: smartproxy (mediabasket-basket-02a.el.wb.ru)
+strict-transport-security: max-age=31536000; preload;
+x-content-type-options: nosniff
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:40 GMT
+
+http_code=200 size=322206
+
+$ curl -sS -o /dev/null -D - "https://basket-02.wbbasket.ru/vol160/part16020/16020837/images/big/2.webp"
+HTTP/2 404 
+content-type: text/html
+access-control-allow-credentials: true
+access-control-allow-headers: *
+access-control-allow-origin: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-02a.el.wb.ru
+cache-control: public, max-age=86400
+cache-status: MISS
+timing-allow-origin: *
+status-no-id: smartproxy (mediabasket-basket-02a.el.wb.ru)
+strict-transport-security: max-age=31536000; preload;
+x-content-type-options: nosniff
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:40 GMT
+
+http_code=404 size=196
+
+################################################################
+# nm=14058746  vol=140  part=14058
+################################################################
+
+--- Подбор basket NN (HTTP-код на card.json) ---
+basket-01  200  https://basket-01.wbbasket.ru/vol140/part14058/14058746/info/ru/card.json
+basket-02  404  https://basket-02.wbbasket.ru/vol140/part14058/14058746/info/ru/card.json
+basket-03  404  https://basket-03.wbbasket.ru/vol140/part14058/14058746/info/ru/card.json
+basket-04  404  https://basket-04.wbbasket.ru/vol140/part14058/14058746/info/ru/card.json
+
+--- base = https://basket-01.wbbasket.ru/vol140/part14058/14058746 ---
+
+$ curl -sS -D - "https://basket-01.wbbasket.ru/vol140/part14058/14058746/info/ru/card.json"
+HTTP/2 200 
+content-type: application/json
+last-modified: Thu, 18 Apr 2024 17:53:20 GMT
+etag: "66215e10-6cb"
+content-length: 1739
+access-control-allow-credentials: true
+access-control-allow-origin: *
+access-control-allow-headers: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+timing-allow-origin: *
+strict-transport-security: max-age=31536000; preload;
+cache-control: public, max-age=86400
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-01a.dl.wb.ru
+cache-status: MISS
+status-no-id: smartproxy (mediabasket-basket-01a.dl.wb.ru)
+x-content-type-options: nosniff
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:40 GMT
+
+{"imt_id":10516298,"nm_id":14058746,"imt_name":"Платье \"Ванесса\"","subj_name":"Платья","subj_root_name":"Одежда","vendor_code":"126-dk126-dk","kinds":["Женский"],"description":"Строгость и элегантность в одном платье. Классический офисный стиль для повседневного использования.","grouped_options":[{"group_name":"Дополнительная информация","options":[{"name":"Рост модели на фото","value":"166 см"},{"name":"Вид застежки","value":"молния"},{"name":"Тип карманов","value":"в шве"},{"name":"Материал подкладки","value":"вискоза"},{"name":"ТНВЭД","value":"6113009000"},{"name":"Декоративные элементы","value":"молния"},{"name":"Размер на модели","value":"42"},{"name":"Коллекция","value":"Весна-Лето 2020"}]}],"options":[{"name":"Рост модели на фото","value":"166 см"},{"name":"Вид застежки","value":"молния"},{"name":"Тип карманов","value":"в шве"},{"name":"Материал подкладки","value":"вискоза"},{"name":"ТНВЭД","value":"6113009000"},{"name":"Декоративные элементы","value":"молния"},{"name":"Размер на модели","value":"42"},{"name":"Коллекция","value":"Весна-Лето 2020"}],"compositions":[{"name":"полиэстер"}],"certificate":{},"nm_colors_names":"бежевый","contents":"платье","selling":{"brand_name":"DKod","supplier_id":36795},"media":{"photo_count":2},"data":{"subject_id":69,"subject_root_id":1}}
+$ curl -sS -D - "https://basket-01.wbbasket.ru/vol140/part14058/14058746/info/sellers.json"
+HTTP/2 200 
+content-type: application/json
+last-modified: Fri, 11 Sep 2026 08:48:48 GMT
+etag: "6aa3c070-11e"
+content-length: 286
+access-control-allow-headers: *
+access-control-allow-credentials: true
+access-control-allow-origin: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-01b.dl.wb.ru
+strict-transport-security: max-age=31536000; preload;
+status-no-id: smartproxy (mediabasket-basket-01b.dl.wb.ru)
+timing-allow-origin: *
+x-content-type-options: nosniff
+cache-control: public, max-age=86400
+cache-status: MISS
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:40 GMT
+
+{"nmId":14058746,"supplierId":36795,"supplierName":"Акишев Алексей Иванович ИП","supplierFullName":"Акишев Алексей Иванович ИП","inn":"503810421430","countryLocCode":"ru-RU","taxpayerCode":"503810421430","trademark":"Dkod","rv":16160436113}
+--- Заголовки фото (images/big/1..2.webp) ---
+$ curl -sS -o /dev/null -D - "https://basket-01.wbbasket.ru/vol140/part14058/14058746/images/big/1.webp"
+HTTP/2 200 
+content-type: image/webp
+last-modified: Fri, 07 Mar 2025 17:49:25 GMT
+etag: "67cb31a5-ab4c"
+content-length: 43852
+access-control-allow-headers: *
+access-control-allow-credentials: true
+access-control-allow-origin: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-01b.dl.wb.ru
+strict-transport-security: max-age=31536000; preload;
+status-no-id: smartproxy (mediabasket-basket-01b.dl.wb.ru)
+timing-allow-origin: *
+x-content-type-options: nosniff
+cache-control: public, max-age=86400
+cache-status: MISS
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:40 GMT
+
+http_code=200 size=43852
+
+$ curl -sS -o /dev/null -D - "https://basket-01.wbbasket.ru/vol140/part14058/14058746/images/big/2.webp"
+HTTP/2 200 
+content-type: image/webp
+last-modified: Fri, 07 Mar 2025 17:49:25 GMT
+etag: "67cb31a5-b092"
+content-length: 45202
+access-control-allow-headers: *
+access-control-allow-credentials: true
+access-control-allow-origin: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-01b.dl.wb.ru
+strict-transport-security: max-age=31536000; preload;
+status-no-id: smartproxy (mediabasket-basket-01b.dl.wb.ru)
+timing-allow-origin: *
+x-content-type-options: nosniff
+cache-control: public, max-age=86400
+cache-status: MISS
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:41 GMT
+
+http_code=200 size=45202
+
+################################################################
+# nm=14058741  vol=140  part=14058
+################################################################
+
+--- Подбор basket NN (HTTP-код на card.json) ---
+basket-01  200  https://basket-01.wbbasket.ru/vol140/part14058/14058741/info/ru/card.json
+basket-02  404  https://basket-02.wbbasket.ru/vol140/part14058/14058741/info/ru/card.json
+basket-03  404  https://basket-03.wbbasket.ru/vol140/part14058/14058741/info/ru/card.json
+basket-04  404  https://basket-04.wbbasket.ru/vol140/part14058/14058741/info/ru/card.json
+
+--- base = https://basket-01.wbbasket.ru/vol140/part14058/14058741 ---
+
+$ curl -sS -D - "https://basket-01.wbbasket.ru/vol140/part14058/14058741/info/ru/card.json"
+HTTP/2 200 
+content-type: application/json
+last-modified: Sat, 18 Jul 2026 01:53:38 GMT
+etag: "6a5adca2-147e"
+content-length: 5246
+access-control-allow-credentials: true
+access-control-allow-origin: *
+access-control-allow-headers: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+timing-allow-origin: *
+strict-transport-security: max-age=31536000; preload;
+cache-control: public, max-age=86400
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-01a.dl.wb.ru
+cache-status: MISS
+status-no-id: smartproxy (mediabasket-basket-01a.dl.wb.ru)
+x-content-type-options: nosniff
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:41 GMT
+
+{"imt_id":159653937,"nm_id":14058741,"imt_name":"Платье/Офисное женское/женское/повседневное","slug":"plateofisnoe-zhenskoezhenskoepovsednevnoe","subj_name":"Платья","subj_root_name":"Одежда","vendor_code":"ФА_МОД82а/083","description":"Это простое, но в то же время очень изысканное и элегантное изделие украсит любую женщину или девушку, независимо от возраста и особенностей фигуры.\nПрекрасно подходит как для создания повседневных луков, так и для особых случаев.","options":[{"name":"Состав","value":"полиэстер; эластан","charc_type":1},{"name":"Цвет","value":"оливковый","charc_type":1,"is_variable":true,"variable_values":["оливковый"],"variable_value_IDs":[20214734]},{"name":"Параметры модели на фото (ОГ-ОТ-ОБ)","value":"85-62-91","charc_type":1},{"name":"Вид застежки","value":"без застежки","charc_type":1},{"name":"Тип карманов","value":"без карманов","charc_type":1},{"name":"Покрой","value":"прямой","charc_type":1},{"name":"Вырез горловины","value":"округлый","charc_type":1},{"name":"Декоративные элементы","value":"без элементов","charc_type":1},{"name":"Особенности модели","value":"нет","charc_type":1},{"name":"Фактура материала","value":"текстильный","charc_type":1},{"name":"Пол","value":"Женский","charc_type":1},{"name":"Уход за вещами","value":"бережная стирка при 30 градусах","charc_type":1},{"name":"Комплектация","value":"пояс; платье","charc_type":1},{"name":"Страна производства","value":"Россия","charc_type":1}],"compositions":[{"name":"полиэстер"},{"name":"эластан"}],"sizes_table":{"details_props":["RU","Обхват груди, в см","Обхват бедер, в см","Обхват талии, в см","Рост, см"],"values":[{"tech_size":"42","chrt_id":42065475,"details":["42","82-86","90-94","62-66",""]},{"tech_size":"44","chrt_id":42065476,"details":["44","86-90","94-98","66-70",""]},{"tech_size":"46","chrt_id":42065477,"details":["46","90-94","98-102","70-74",""]},{"tech_size":"48","chrt_id":42065478,"details":["48","94-98","102-106","74-78",""]},{"tech_size":"50","chrt_id":42065479,"details":["50","98-102","106-110","78-82",""]},{"tech_size":"52","chrt_id":42065480,"details":["52","102-106","110-114","82-86",""]},{"tech_size":"54","chrt_id":42065481,"details":["54","106-110","114-118","86-90",""]},{"tech_size":"56","chrt_id":42065482,"details":["56","116","124","101","164-170"]}]},"certificate":{},"nm_colors_names":"оливковый","colors":[14058741,13224277,14485687,15852675,14485684,14485688,14485685,14722689,14890069,13224275,15852674],"contents":"пояс; платье","kinds":["Женский"],"kinds_id":[15001349],"full_colors":[{"nm_id":14058741},{"nm_id":13224277},{"nm_id":14485687},{"nm_id":15852675},{"nm_id":14485684},{"nm_id":14485688},{"nm_id":14485685},{"nm_id":14722689},{"nm_id":14890069},{"nm_id":13224275},{"nm_id":15852674}],"selling":{"brand_name":"A-A Awesome Apparel by Ksenia Avakyan","brand_hash":"9E8178926E0DD734","supplier_id":37603},"media":{"photo_count":5},"data":{"subject_id":69,"subject_root_id":1,"chrt_ids":[42065475,42065477,42065479,42065480,42065481,42065478,42065476,42065482]},"grouped_options":[{"group_name":"Основная информация","options":[{"name":"Состав","value":"полиэстер; эластан","charc_type":1},{"name":"Цвет","value":"оливковый","charc_type":1,"is_variable":true,"variable_values":["оливковый"],"variable_value_IDs":[20214734]},{"name":"Пол","value":"Женский","charc_type":1}]},{"group_name":"Дополнительная информация","options":[{"name":"Параметры модели на фото (ОГ-ОТ-ОБ)","value":"85-62-91","charc_type":1},{"name":"Вид застежки","value":"без застежки","charc_type":1},{"name":"Тип карманов","value":"без карманов","charc_type":1},{"name":"Покрой","value":"прямой","charc_type":1},{"name":"Вырез горловины","value":"округлый","charc_type":1},{"name":"Декоративные элементы","value":"без элементов","charc_type":1},{"name":"Особенности модели","value":"нет","charc_type":1},{"name":"Фактура материала","value":"текстильный","charc_type":1},{"name":"Уход за вещами","value":"бережная стирка при 30 градусах","charc_type":1},{"name":"Комплектация","value":"пояс; платье","charc_type":1},{"name":"Страна производства","value":"Россия","charc_type":1}]}],"need_kiz":true,"user_flags":0,"update_date":"2023-08-28T18:24:45.249634Z","create_date":"2019-09-10T19:11:15Z"}
+
+$ curl -sS -D - "https://basket-01.wbbasket.ru/vol140/part14058/14058741/info/sellers.json"
+HTTP/2 200 
+content-type: application/json
+last-modified: Fri, 11 Sep 2026 09:21:56 GMT
+etag: "6aa3c834-174"
+content-length: 372
+access-control-allow-headers: *
+access-control-allow-credentials: true
+access-control-allow-origin: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-01b.dl.wb.ru
+strict-transport-security: max-age=31536000; preload;
+status-no-id: smartproxy (mediabasket-basket-01b.dl.wb.ru)
+timing-allow-origin: *
+x-content-type-options: nosniff
+cache-control: public, max-age=86400
+cache-status: MISS
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:41 GMT
+
+{"nmId":14058741,"supplierId":37603,"supplierName":"Кухарский Вадим Александрович ИП","supplierFullName":"Кухарский Вадим Александрович ИП","inn":"774335833816","ogrnip":"316774600317752","countryLocCode":"ru-RU","taxpayerCode":"774335833816","trademark":"А-А Awesome Apparel by Ksenia Avakyan","rv":16164797817}
+--- Заголовки фото (images/big/1..2.webp) ---
+$ curl -sS -o /dev/null -D - "https://basket-01.wbbasket.ru/vol140/part14058/14058741/images/big/1.webp"
+HTTP/2 200 
+content-type: image/webp
+last-modified: Fri, 07 Mar 2025 17:49:25 GMT
+etag: "67cb31a5-6332"
+content-length: 25394
+access-control-allow-headers: *
+access-control-allow-credentials: true
+access-control-allow-origin: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-01b.dl.wb.ru
+strict-transport-security: max-age=31536000; preload;
+status-no-id: smartproxy (mediabasket-basket-01b.dl.wb.ru)
+timing-allow-origin: *
+x-content-type-options: nosniff
+cache-control: public, max-age=86400
+cache-status: MISS
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:41 GMT
+
+http_code=200 size=25394
+
+$ curl -sS -o /dev/null -D - "https://basket-01.wbbasket.ru/vol140/part14058/14058741/images/big/2.webp"
+HTTP/2 200 
+content-type: image/webp
+last-modified: Fri, 07 Mar 2025 17:49:25 GMT
+etag: "67cb31a5-516c"
+content-length: 20844
+access-control-allow-headers: *
+access-control-allow-credentials: true
+access-control-allow-origin: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+server-timing: cache;desc=MISS,srv;desc=mediabasket-basket-01b.dl.wb.ru
+strict-transport-security: max-age=31536000; preload;
+status-no-id: smartproxy (mediabasket-basket-01b.dl.wb.ru)
+timing-allow-origin: *
+x-content-type-options: nosniff
+cache-control: public, max-age=86400
+cache-status: MISS
+alt-svc: h3=":443"; ma=86400
+date: Tue, 13 Oct 2026 23:09:41 GMT
+
+http_code=200 size=20844
+
+
+################################################################
+# Прогон реального кода (loadWbCard + analyzeFrame) по живой сети
+# команда: npx vite-node /tmp/wbcheck/live.ts   (2026-10-13T23:16:05Z)
+################################################################
+
+===== nmId=16020837 candidates=2,1,3,4 =====
+{
+  "nmId": 16020837,
+  "name": "Брошь Ягоды, подарок",
+  "subjectName": "Броши",
+  "rootSubjectName": "Бижутерия",
+  "brand": "KORALI",
+  "colors": [
+    "бордовый",
+    "зеленый"
+  ],
+  "composition": [
+    "бижутерный сплав"
+  ],
+  "contents": "брошь; подарочная упаковка",
+  "photoCount": 1,
+  "sellerName": "ИП Коренев А. В.",
+  "firstPhoto": "https://basket-02.wbbasket.ru/vol160/part16020/16020837/images/big/1.webp"
+}
+  photo 1: isPackshot=false whiteness=0.007 uniformity=0.494 reason="Фон не белый и неоднородный — не пакшот"
+  => первый пакшот: нет
+
+===== nmId=14058746 candidates=1,2,3 =====
+{
+  "nmId": 14058746,
+  "name": "Платье \"Ванесса\"",
+  "subjectName": "Платья",
+  "rootSubjectName": "Одежда",
+  "brand": "DKod",
+  "colors": [
+    "бежевый"
+  ],
+  "composition": [
+    "полиэстер"
+  ],
+  "contents": "платье",
+  "photoCount": 2,
+  "sellerName": "Акишев Алексей Иванович ИП",
+  "firstPhoto": "https://basket-01.wbbasket.ru/vol140/part14058/14058746/images/big/1.webp"
+}
+  photo 1: isPackshot=true whiteness=0.893 uniformity=0.896 reason="Рамка почти белая и однородная — это пакшот"
+  photo 2: isPackshot=true whiteness=0.868 uniformity=0.871 reason="Рамка почти белая и однородная — это пакшот"
+  => первый пакшот: фото 1
+
+===== nmId=14058741 candidates=1,2,3 =====
+{
+  "nmId": 14058741,
+  "name": "Платье/Офисное женское/женское/повседневное",
+  "subjectName": "Платья",
+  "rootSubjectName": "Одежда",
+  "brand": "A-A Awesome Apparel by Ksenia Avakyan",
+  "colors": [
+    "оливковый"
+  ],
+  "composition": [
+    "полиэстер; эластан"
+  ],
+  "contents": "пояс; платье",
+  "photoCount": 5,
+  "sellerName": "Кухарский Вадим Александрович ИП",
+  "firstPhoto": "https://basket-01.wbbasket.ru/vol140/part14058/14058741/images/big/1.webp"
+}
+  photo 1: isPackshot=false whiteness=0.000 uniformity=0.875 reason="Фон не белый (белого 0%) — вероятно, фото на модели"
+  photo 2: isPackshot=false whiteness=0.000 uniformity=0.924 reason="Фон не белый (белого 0%) — вероятно, фото на модели"
+  photo 3: isPackshot=false whiteness=0.000 uniformity=0.922 reason="Фон не белый (белого 0%) — вероятно, фото на модели"
+  photo 4: isPackshot=false whiteness=0.000 uniformity=0.893 reason="Фон не белый (белого 0%) — вероятно, фото на модели"
+  photo 5: isPackshot=false whiteness=0.000 uniformity=0.814 reason="Фон не белый (белого 0%) — вероятно, фото на модели"
+  => первый пакшот: нет

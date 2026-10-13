@@ -1,0 +1,51 @@
+{
+ "source": "basket-*.wbbasket.ru/.../info/ru/card.json (curl, см. docs/evidence/raw/t4-t5-t6-live.txt)",
+ "fetched": "2026-10-14",
+ "cards": [
+  {
+   "nm_id": 16020837,
+   "basket": "basket-02",
+   "subj_root_name": "Бижутерия",
+   "subj_name": "Броши",
+   "imt_name": "Брошь Ягоды, подарок",
+   "subject_id": 295,
+   "subject_root_id": 200
+  },
+  {
+   "nm_id": 14058739,
+   "basket": "basket-01",
+   "subj_root_name": "Красота",
+   "subj_name": "Эфирные масла",
+   "imt_name": "Эфирное масло набор",
+   "subject_id": 2259,
+   "subject_root_id": 49
+  },
+  {
+   "nm_id": 14058746,
+   "basket": "basket-01",
+   "subj_root_name": "Одежда",
+   "subj_name": "Платья",
+   "imt_name": "Платье \"Ванесса\"",
+   "subject_id": 69,
+   "subject_root_id": 1
+  },
+  {
+   "nm_id": 14058741,
+   "basket": "basket-01",
+   "subj_root_name": "Одежда",
+   "subj_name": "Платья",
+   "imt_name": "Платье/Офисное женское/женское/повседневное",
+   "subject_id": 69,
+   "subject_root_id": 1
+  },
+  {
+   "nm_id": 14058742,
+   "basket": "basket-01",
+   "subj_root_name": "Спортивная одежда",
+   "subj_name": "Костюмы спортивные",
+   "imt_name": "спортивный костюм для фигуристки на тренировку",
+   "subject_id": 4853,
+   "subject_root_id": 1513
+  }
+ ]
+}
