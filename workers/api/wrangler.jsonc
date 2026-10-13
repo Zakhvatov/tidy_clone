@@ -1,0 +1,17 @@
+{
+  // T3 · Воркер-посредник. Деплой запускает координатор.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tidy-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-10-01",
+  "observability": {
+    "enabled": true
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    // Настраиваемый список источников для CORS (через запятую).
+    "ALLOWED_ORIGINS": "https://tidy-clone.pages.dev,http://localhost:5173"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "tidy-api",
+  "private": true,
+  "version": "0.1.0",
+  "description": "T3 · Воркер-посредник tidy-api: генерация AI-версии и распознавание категории",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261006.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
+    "wrangler": "^4.149.0"
+  }
+}
