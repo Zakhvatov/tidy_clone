@@ -14,3 +14,7 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# pi goal runtime
+.pi/
+.agents/
