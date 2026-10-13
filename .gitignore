@@ -1,0 +1,16 @@
+# зависимости и сборка
+node_modules/
+dist/
+.vite/
+
+# локальные артефакты инструментов
+.cf-probe/
+.ruff_cache/
+__pycache__/
+*.pyc
+
+# wrangler
+.wrangler/
+
+# macOS
+.DS_Store
