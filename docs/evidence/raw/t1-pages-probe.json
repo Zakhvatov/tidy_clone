@@ -1,0 +1,58 @@
+[
+    {
+        "path": "/",
+        "status": 200,
+        "bytes": 939,
+        "title": "Гардероб",
+        "hasManifest": true,
+        "hasModuleScript": true,
+        "head": "<!doctype html> <html lang=\"ru\"> <head> <meta charset=\"UTF-8\" /> <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no\" /"
+    },
+    {
+        "path": "/add",
+        "status": 200,
+        "bytes": 939,
+        "title": "Гардероб",
+        "hasManifest": true,
+        "hasModuleScript": true,
+        "head": "<!doctype html> <html lang=\"ru\"> <head> <meta charset=\"UTF-8\" /> <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no\" /"
+    },
+    {
+        "path": "/nonexistent-page-xyz",
+        "status": 200,
+        "bytes": 939,
+        "title": "Гардероб",
+        "hasManifest": true,
+        "hasModuleScript": true,
+        "head": "<!doctype html> <html lang=\"ru\"> <head> <meta charset=\"UTF-8\" /> <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no\" /"
+    },
+    {
+        "path": "/assets/index-CIuPG8cO.js",
+        "status": 200,
+        "type": "application/javascript"
+    },
+    {
+        "path": "/manifest.webmanifest",
+        "status": 200,
+        "type": "application/manifest+json",
+        "len": 622
+    },
+    {
+        "path": "/sw.js",
+        "status": 200,
+        "type": "application/javascript",
+        "len": 1731
+    },
+    {
+        "path": "/pwa-192x192.png",
+        "status": 200,
+        "type": "image/png",
+        "len": 6475
+    },
+    {
+        "path": "/apple-touch-icon.png",
+        "status": 200,
+        "type": "image/png",
+        "len": 3188
+    }
+]
