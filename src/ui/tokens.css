@@ -1,0 +1,30 @@
+:root {
+  /* Палитра — ADR-0005 */
+  --color-bg: #ffffff;
+  --color-surface: #f6f6f4;
+  --color-border: #ededea;
+  --color-text: #111111;
+  --color-text-secondary: #8a8a85;
+  --color-accent: #c05b3f;
+
+  /* Скругления — ADR-0005 */
+  --radius-card: 20px;
+  --radius-chip: 12px;
+  --radius-pill: 999px;
+
+  /* Отступы — ADR-0005 */
+  --space-edge: 20px;
+  --space-section: 28px;
+
+  /* Типографика — ADR-0005: системный шрифт, без веб-шрифтов */
+  --font-system: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+
+  /* Анимации — ADR-0005: 150–200 ms, ease-out */
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Безопасные зоны iPhone */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}

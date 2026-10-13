@@ -23,6 +23,7 @@ LOGDIR="$ROOT/.agents/logs"
 mkdir -p "$LOGDIR"
 LOG="$LOGDIR/$ROLE-$TASK.log"
 STATUS="$LOGDIR/$ROLE-$TASK.status"
+PIDFILE="$LOGDIR/$ROLE-$TASK.pid"
 
 : > "$LOG"
 echo "running" > "$STATUS"
@@ -33,8 +34,12 @@ echo "running" > "$STATUS"
      --mode text \
      --no-session \
      --append-system-prompt "$(cat "$ROLE_FILE")"
-) >>"$LOG" 2>&1
+) >>"$LOG" 2>&1 &
+AGENT_PID=$!
+echo "$AGENT_PID" > "$PIDFILE"
+wait "$AGENT_PID"
 CODE=$?
+rm -f "$PIDFILE"
 
 if [ "$CODE" -eq 0 ]; then
   echo "done:$CODE" > "$STATUS"

@@ -1,0 +1,39 @@
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  background: var(--color-bg);
+}
+
+.content {
+  flex: 1;
+  padding: calc(var(--safe-top) + var(--space-edge)) var(--space-edge) var(--space-section);
+}
+
+.tabs {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  gap: 8px;
+  padding: 10px var(--space-edge) calc(var(--safe-bottom) + 10px);
+  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--color-border);
+}
+
+.tab {
+  flex: 1;
+  padding: 12px 8px;
+  border-radius: var(--radius-pill);
+  text-align: center;
+  text-decoration: none;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  transition: color var(--motion-fast) var(--motion-ease),
+    background-color var(--motion-fast) var(--motion-ease);
+}
+
+.tabActive {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+}
