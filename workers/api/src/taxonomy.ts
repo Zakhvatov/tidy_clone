@@ -21,7 +21,6 @@ export const TAXONOMY = {
 } as const satisfies Record<string, readonly string[]>;
 
 export type TopCategory = keyof typeof TAXONOMY | typeof FALLBACK_CATEGORY;
-
 /**
  * «Разное» — не часть таксономии ADR-0004, а поведение для неизвестного значения:
  * вещь не теряется, а попадает в «Разное» с предложением выбрать категорию вручную.
@@ -35,21 +34,29 @@ export interface Classification {
   confidence: number;
 }
 
+/** Верхние категории, включая «Разное» — как в корневом `src/domain/taxonomy.ts`. */
 export function topCategories(): string[] {
-  return Object.keys(TAXONOMY);
+  return [...Object.keys(TAXONOMY), FALLBACK_CATEGORY];
 }
 
 export function subcategoriesOf(top: string): readonly string[] {
-  if (isKnownCategory(top)) return TAXONOMY[top];
+  if (top === FALLBACK_CATEGORY) return [FALLBACK_SUBCATEGORY];
+  if (isTopCategory(top)) return TAXONOMY[top];
   return [];
 }
 
-export function isKnownCategory(value: string): value is keyof typeof TAXONOMY {
+/** Известна ли категория, включая «Разное». */
+export function isKnownCategory(value: string): value is keyof typeof TAXONOMY | typeof FALLBACK_CATEGORY {
+  return value === FALLBACK_CATEGORY || isTopCategory(value);
+}
+
+function isTopCategory(value: string): value is keyof typeof TAXONOMY {
   return Object.prototype.hasOwnProperty.call(TAXONOMY, value);
 }
 
 export function isKnownSubcategory(top: string, sub: string): boolean {
-  if (!isKnownCategory(top)) return false;
+  if (top === FALLBACK_CATEGORY) return sub === FALLBACK_SUBCATEGORY;
+  if (!isTopCategory(top)) return false;
   return (TAXONOMY[top] as readonly string[]).includes(sub);
 }
 

@@ -1,0 +1,47 @@
+# T3-hardening · живые проверки воркера tidy-api
+# 2026-10-14 02:50:01 MSK
+# URL: https://tidy-api.megabaff2011.workers.dev
+# Deploy Version ID: d2b9817e-0998-4f04-8c47-90fcb599c7b4
+# CLIENT_TOKEN (значение для VITE_TIDY_CLIENT_TOKEN): 793e12d5783c01bd2d2f62d7976cc3f3171a4df8a4720d4f
+
+## 1. GET /health — открыт, без деталей
+http=200
+{"ok":true,"ai":true}
+
+## 2. POST /generate без x-tidy-client → 401 unauthorized
+http=401
+{"error":{"code":"unauthorized","message":"Неверный или отсутствующий клиентский токен"}}
+
+## 3. POST /generate с x-tidy-client → 200 image/jpeg
+# (ответ >19 КБ локальная сеть обрывает — D4; статус и тип получены)
+curl: (28) Operation timed out after 30010 milliseconds with 19126 out of 247575 bytes received
+http=200 type=image/jpeg size=19126
+HTTP/2 200 
+content-type: image/jpeg
+content-length: 247575
+/tmp/g.jpg: JPEG image data, JFIF standard 1.01, aspect ratio, density 1x1, segment length 16, baseline, precision 8, 1024x1024, components 3
+
+## 4. POST /generate с телом 16385 Б (> лимита 16384 Б) → 413 payload_too_large
+   16385 /tmp/t3_big.json
+curl: (28) Operation timed out after 30008 milliseconds with 0 out of 104 bytes received
+http=413 size_upload=16385
+
+
+## 5. POST /classify без x-tidy-client → 401 unauthorized
+http=401
+{"error":{"code":"unauthorized","message":"Неверный или отсутствующий клиентский токен"}}
+
+## 6. CORS preflight с превью-поддомена Pages → 204 + allow-origin
+HTTP/2 204 
+access-control-allow-origin: https://abc123.tidy-clone.pages.dev
+access-control-allow-headers: content-type, x-tidy-client
+access-control-allow-methods: GET, POST, OPTIONS
+access-control-max-age: 86400
+
+## 7. Ограничение частоты /generate (лимит 20/мин): 25 быстрых запросов
+codes: 400 400 400 400 400 400 400 400 400 400 400 400 400 400 400 400 400 400 400 429 429 429 429 429 429 
+# ожидаем: 20 запросов проходят (400 из-за пустого prompt), затем 429 rate_limited
+
+## 8. Пример тела 429
+http=429
+{"error":{"code":"rate_limited","message":"Слишком много запросов, попробуйте позже"}}

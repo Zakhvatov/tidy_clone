@@ -1,0 +1,22 @@
+{
+  // Временный пробник T11. Деплоится только ради живого прогона спайка и
+  // удаляется после него; в продуктовой поставке не участвует.
+  "$schema": "../../workers/api/node_modules/wrangler/config-schema.json",
+  "name": "tidy-t11-probe",
+  "main": "src/index.js",
+  "compatibility_date": "2025-10-01",
+  "services": [
+    {
+      // Service binding вместо fetch: обычный fetch в воркер того же аккаунта
+      // даёт error 1042 (см. docs/decisions-log.md, D5).
+      "binding": "TIDY_API",
+      "service": "tidy-api"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "T11_IMAGES",
+      "id": "4a1a35f62a314661862c0c63d163c302"
+    }
+  ]
+}

@@ -1,7 +1,11 @@
-import { render, screen } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import 'fake-indexeddb/auto'
 
+import { render, screen } from '@testing-library/react'
+import { deleteDB } from 'idb'
+import { MemoryRouter } from 'react-router-dom'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import { DB_NAME, closeDb } from '../storage/db'
 import { AppRoutes } from './App'
 
 function renderAt(path: string) {
@@ -13,10 +17,21 @@ function renderAt(path: string) {
 }
 
 describe('Маршрутизация', () => {
-  it('открывает экран гардероба на /', () => {
+  beforeEach(async () => {
+    await closeDb()
+    await deleteDB(DB_NAME)
+  })
+
+  afterEach(async () => {
+    await closeDb()
+    await deleteDB(DB_NAME)
+  })
+
+  it('открывает экран гардероба на /', async () => {
     renderAt('/')
     expect(screen.getByRole('heading', { name: 'Гардероб' })).toBeInTheDocument()
-    expect(screen.getByText('Гардероб пуст')).toBeInTheDocument()
+    // Гардероб теперь читается из IndexedDB асинхронно (T13).
+    expect(await screen.findByText('Гардероб пуст')).toBeInTheDocument()
   })
 
   it('открывает экран добавления на /add с полем ссылки', () => {

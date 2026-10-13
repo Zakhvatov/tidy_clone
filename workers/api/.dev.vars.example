@@ -1,0 +1,6 @@
+# Пример локальных секретов воркера `tidy-api` (T3-hardening).
+#
+# Реальное значение CLIENT_TOKEN ставится как секрет Cloudflare:
+#   npx wrangler secret put CLIENT_TOKEN
+# В репозиторий секрет не попадает; здесь — только для `wrangler dev` и документации.
+CLIENT_TOKEN=__ЗАМЕНИТЕ_НА_СВОЙ_ТОКЕН__

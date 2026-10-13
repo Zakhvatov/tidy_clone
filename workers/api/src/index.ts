@@ -22,8 +22,18 @@ import {
 } from "./taxonomy";
 import { CLASSIFY_TIMEOUT_MS } from "./config";
 
+/** Опции Workers AI: `signal` позволяет отменить подзапрос при таймауте. */
+export interface AiRunOptions {
+  signal?: AbortSignal;
+}
+
 export interface AiBinding {
-  run(model: string, input: Record<string, unknown>): Promise<unknown>;
+  run(model: string, input: Record<string, unknown>, options?: AiRunOptions): Promise<unknown>;
+}
+
+/** Binding Cloudflare Rate Limiting (`ratelimits` в wrangler.jsonc). */
+export interface RateLimitBinding {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
 export interface Env {
@@ -31,8 +41,19 @@ export interface Env {
   AI?: AiBinding;
   /** Секрет: ключ провайдера `opencode-go`. В репозиторий не попадает. */
   OPENCODE_API_KEY?: string;
+  /**
+   * Секрет: клиентский токен PWA (`wrangler secret put CLIENT_TOKEN`).
+   * Если не задан — защищённые маршруты отвечают 503 `not_configured`.
+   */
+  CLIENT_TOKEN?: string;
   /** Список источников через запятую. Переопределяется var-ом `ALLOWED_ORIGINS`. */
   ALLOWED_ORIGINS?: string;
+  /** Лимитер генерации (20 запросов/мин). */
+  GENERATE_RATE_LIMITER?: RateLimitBinding;
+  /** Лимитер классификации (40 запросов/мин). */
+  CLASSIFY_RATE_LIMITER?: RateLimitBinding;
+  /** Общий лимитер: fallback, если отдельные bindings не сконфигурированы. */
+  RATE_LIMITER?: RateLimitBinding;
 }
 
 export const GENERATE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
@@ -47,6 +68,9 @@ export const VISION_BASE_URL = "https://opencode.ai/zen/go/v1";
  * Значение — UUID, новый на каждый запрос; сессию не переиспользуем.
  */
 export const OPENCODE_SESSION_HEADER = "x-opencode-session";
+
+/** Заголовок с клиентским токеном PWA. Сверяется constant-time с секретом `CLIENT_TOKEN`. */
+export const CLIENT_TOKEN_HEADER = "x-tidy-client";
 
 /** Новый идентификатор сессии для одного запроса к провайдеру. */
 export function newOpencodeSessionId(): string {
@@ -68,12 +92,25 @@ const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "imag
  *  DeepSeek V4.1 Flash — reasoning-модель, поэтому запас должен покрывать и рассуждение. */
 const VISION_MAX_TOKENS = 2048;
 
+/** Коды ошибок API: union, а не свободная строка, — расхождение ловится типами. */
+export type ApiErrorCode =
+  | "invalid_input"
+  | "payload_too_large"
+  | "not_found"
+  | "method_not_allowed"
+  | "internal_error"
+  | "not_configured"
+  | "unauthorized"
+  | "rate_limited"
+  | "model_timeout"
+  | "model_error";
+
 export class HttpError extends Error {
   readonly status: number;
-  readonly code: string;
+  readonly code: ApiErrorCode;
   readonly allow?: string;
 
-  constructor(status: number, code: string, message: string, allow?: string) {
+  constructor(status: number, code: ApiErrorCode, message: string, allow?: string) {
     super(message);
     this.name = "HttpError";
     this.status = status;
@@ -94,15 +131,55 @@ function allowedOrigins(env: Env): string[] {
     .filter((value) => value.length > 0);
 }
 
+/**
+ * Разрешён ли источник: точное совпадение со списком ИЛИ превью-поддомен Pages.
+ *
+ * Cloudflare Pages выдаёт каждому превью адрес `<hash>.tidy-clone.pages.dev`, и
+ * перечислять все хэши в `ALLOWED_ORIGINS` невозможно. Поэтому для каждого
+ * настроенного `https://<name>.pages.dev` разрешаем ровно один дополнительный
+ * поддомен-метку: `https://<preview>.` + `<name>.pages.dev`. Проверка — по
+ * суффиксу с точкой, а не по `*`.
+ */
+export function isAllowedOrigin(origin: string, allowed: string[]): boolean {
+  if (allowed.includes(origin)) return true;
+
+  let hostname: string;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "https:") return false;
+    hostname = url.hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+
+  for (const candidate of allowed) {
+    let base: URL;
+    try {
+      base = new URL(candidate);
+    } catch {
+      continue;
+    }
+    if (base.protocol !== "https:") continue;
+    const baseHost = base.hostname.toLowerCase();
+    if (!baseHost.endsWith(".pages.dev")) continue;
+    const suffix = `.${baseHost}`;
+    if (!hostname.endsWith(suffix)) continue;
+    const label = hostname.slice(0, -suffix.length);
+    // Превью — ровно одна метка перед базовым домёном; вложенные поддомены не пускаем.
+    if (label.length > 0 && !label.includes(".")) return true;
+  }
+  return false;
+}
+
 export function corsHeaders(request: Request, env: Env): Record<string, string> {
   const headers: Record<string, string> = {
     vary: "Origin",
     "access-control-allow-methods": "GET, POST, OPTIONS",
-    "access-control-allow-headers": "content-type",
+    "access-control-allow-headers": `content-type, ${CLIENT_TOKEN_HEADER}`,
     "access-control-max-age": "86400",
   };
   const origin = request.headers.get("Origin");
-  if (origin && allowedOrigins(env).includes(origin)) {
+  if (origin && isAllowedOrigin(origin, allowedOrigins(env))) {
     headers["access-control-allow-origin"] = origin;
   }
   return headers;
@@ -132,7 +209,7 @@ function jsonResponse(
 
 function errorResponse(
   status: number,
-  code: string,
+  code: ApiErrorCode,
   message: string,
   request: Request,
   env: Env,
@@ -160,20 +237,23 @@ function shortError(error: unknown): string {
 // ---------------------------------------------------------------------------
 
 async function readJsonObject(request: Request, maxBytes: number): Promise<Record<string, unknown>> {
+  // Если размер заявлен заголовком и уже превышает лимит — не читаем тело вовсе.
   const declared = Number(request.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) {
+    await request.body?.cancel().catch(() => undefined);
     throw new HttpError(413, "payload_too_large", "Тело запроса слишком большое");
+  }
+
+  const bytes = await readBodyWithLimit(request, maxBytes);
+  if (bytes.length === 0) {
+    throw new HttpError(400, "invalid_input", "Пустое тело запроса");
   }
 
   let text: string;
   try {
-    text = await request.text();
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
   } catch {
-    throw new HttpError(400, "invalid_input", "Не удалось прочитать тело запроса");
-  }
-
-  if (text.length > maxBytes) {
-    throw new HttpError(413, "payload_too_large", "Тело запроса слишком большое");
+    throw new HttpError(400, "invalid_input", "Тело запроса не является корректным UTF-8");
   }
   if (text.trim().length === 0) {
     throw new HttpError(400, "invalid_input", "Пустое тело запроса");
@@ -189,6 +269,46 @@ async function readJsonObject(request: Request, maxBytes: number): Promise<Recor
     throw new HttpError(400, "invalid_input", "Тело запроса должно быть JSON-объектом");
   }
   return parsed;
+}
+
+/**
+ * Читает тело потоком, считая байты, и обрывает чтение сразу при превышении лимита.
+ *
+ * `await request.text()` буферизует всё тело целиком: запрос без `Content-Length`
+ * (chunked) обходил проверку и удерживал память до потолка Cloudflare. Здесь чтение
+ * идёт reader'ом, и при первом же превышении `reader.cancel()` закрывает поток.
+ */
+async function readBodyWithLimit(request: Request, maxBytes: number): Promise<Uint8Array> {
+  const body = request.body;
+  if (!body) return new Uint8Array(0);
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new HttpError(413, "payload_too_large", "Тело запроса слишком большое");
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(400, "invalid_input", "Не удалось прочитать тело запроса");
+  }
+
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -212,23 +332,102 @@ function isValidBase64(value: string): boolean {
   return /^[A-Za-z0-9+/]+={0,2}$/.test(compact);
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, code: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new HttpError(504, code, "Модель не ответила за отведённое время")),
-      ms,
-    );
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
+/**
+ * Constant-time сравнение токенов без раннего выхода по содержимому. Длины
+ * смешиваются в аккумулятор, байты сравниваются XOR-ом по всей длине `max`:
+ * ни префикс, ни позиция не влияют на время. `===` для секретов недопустим.
+ */
+function timingSafeTokenEqual(provided: string, expected: string): boolean {
+  const encoder = new TextEncoder();
+  const left = encoder.encode(provided);
+  const right = encoder.encode(expected);
+  let diff = left.length ^ right.length;
+  const length = Math.max(left.length, right.length);
+  for (let i = 0; i < length; i += 1) diff |= (left[i] ?? 0) ^ (right[i] ?? 0);
+  return diff === 0;
+}
+
+/**
+ * Барьер для защищённых маршрутов: клиентский токен PWA.
+ * Нет секрета `CLIENT_TOKEN` → 503 `not_configured` (никакого «открыто по умолчанию»),
+ * неверный/отсутствующий заголовок → 401 `unauthorized`.
+ */
+async function requireClientToken(request: Request, env: Env): Promise<void> {
+  const expected = env.CLIENT_TOKEN?.trim();
+  if (!expected) {
+    throw new HttpError(503, "not_configured", "Сервис не настроен: не задан CLIENT_TOKEN");
+  }
+  const provided = request.headers.get(CLIENT_TOKEN_HEADER) ?? "";
+  if (!timingSafeTokenEqual(provided, expected)) {
+    throw new HttpError(401, "unauthorized", "Неверный или отсутствующий клиентский токен");
+  }
+}
+
+/** Хэш IP клиента — ключ лимитера (в открытом виде IP не храним). */
+async function rateLimitKey(request: Request): Promise<string> {
+  const ip =
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown";
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export type ProtectedRoute = "generate" | "classify";
+
+/**
+ * Cloudflare Rate Limiting. Отсутствие binding в локальном запуске — не ошибка:
+ * лимит просто не применяется. Сбой самого лимитера — fail-open, чтобы не ронять сервис.
+ */
+async function enforceRateLimit(request: Request, env: Env, route: ProtectedRoute): Promise<void> {
+  const limiter =
+    route === "generate"
+      ? env.GENERATE_RATE_LIMITER ?? env.RATE_LIMITER
+      : env.CLASSIFY_RATE_LIMITER ?? env.RATE_LIMITER;
+  if (!limiter || typeof limiter.limit !== "function") return;
+
+  let outcome: { success: boolean };
+  try {
+    outcome = await limiter.limit({ key: await rateLimitKey(request) });
+  } catch (error) {
+    console.error(`[tidy-api] rate limiter error: ${shortError(error)}`);
+    return;
+  }
+  if (!outcome.success) {
+    throw new HttpError(429, "rate_limited", "Слишком много запросов, попробуйте позже");
+  }
+}
+
+/** Токен проверяем первым: незачем тратить лимит на неаутентифицированные запросы. */
+async function guardProtected(request: Request, env: Env, route: ProtectedRoute): Promise<void> {
+  await requireClientToken(request, env);
+  await enforceRateLimit(request, env, route);
+}
+
+/**
+ * Workers AI с настоящей отменой подзапроса. `env.AI.run(model, input, { signal })`
+ * умеет прерывать работу по `AbortSignal`, поэтому по таймауту генерация govt
+ * останавливается и нейроны больше не тратятся (прежний `withTimeout` лишь
+ * отбрасывал промис, а подзапрос продолжал жить).
+ */
+async function runAiWithTimeout(
+  ai: AiBinding,
+  model: string,
+  input: Record<string, unknown>,
+  ms: number,
+): Promise<unknown> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await ai.run(model, input, { signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new HttpError(504, "model_timeout", "Модель не ответила за отведённое время");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -241,7 +440,7 @@ async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   ms: number,
-  code: string,
+  code: ApiErrorCode,
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
@@ -281,10 +480,12 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     }
     if (path === "/generate") {
       if (request.method !== "POST") throw methodNotAllowed("POST");
+      await guardProtected(request, env, "generate");
       return await handleGenerate(request, env);
     }
     if (path === "/classify") {
       if (request.method !== "POST") throw methodNotAllowed("POST");
+      await guardProtected(request, env, "classify");
       return await handleClassify(request, env);
     }
     throw new HttpError(404, "not_found", "Маршрут не найден");
@@ -329,7 +530,7 @@ async function handleGenerate(request: Request, env: Env): Promise<Response> {
 
   let output: unknown;
   try {
-    output = await withTimeout(ai.run(GENERATE_MODEL, { prompt: rawPrompt, steps: 4 }), GENERATE_TIMEOUT_MS, "model_timeout");
+    output = await runAiWithTimeout(ai, GENERATE_MODEL, { prompt: rawPrompt, steps: 4 }, GENERATE_TIMEOUT_MS);
   } catch (error) {
     if (error instanceof HttpError) throw error;
     console.error(`[tidy-api] generate model error: ${shortError(error)}`);

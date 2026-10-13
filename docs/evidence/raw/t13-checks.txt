@@ -1,0 +1,26 @@
+$ npx tsc --noEmit
+exit 0
+
+$ npm test
+ ✓ src/services/wb/card.test.ts (15 tests) 12ms
+ ✓ src/domain/taxonomy.test.ts (5 tests) 4ms
+
+ Test Files  16 passed (16)
+      Tests  138 passed (138)
+   Start at  02:48:02
+   Duration  3.11s (transform 1.17s, setup 2.05s, collect 3.05s, tests 3.31s, environment 7.92s, prepare 1.26s)
+
+
+$ npm run build
+dist/index.html                                    0.96 kB │ gzip:  0.45 kB
+dist/assets/index-BUMePb7J.css                    11.11 kB │ gzip:  2.46 kB
+dist/assets/workbox-window.prod.es5-BBnX5xw4.js    5.75 kB │ gzip:  2.36 kB
+dist/assets/index-BV7IrvJC.js                    316.47 kB │ gzip: 99.56 kB
+✓ built in 728ms
+
+PWA v1.3.0
+mode      generateSW
+precache  14 entries (361.56 KiB)
+files generated
+  dist/sw.js
+  dist/workbox-9c191d2f.js

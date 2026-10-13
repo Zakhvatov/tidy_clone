@@ -1,0 +1,17 @@
+.frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  /* Фиксированная пропорция: место под картинку занято сразу, вёрстка не прыгает. */
+  aspect-ratio: 3 / 4;
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}

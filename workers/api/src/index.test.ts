@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  CLIENT_TOKEN_HEADER,
   handleRequest,
   OPENCODE_SESSION_HEADER,
   parseModelJson,
@@ -13,16 +14,19 @@ import {
   classifyFromModel,
   isKnownCategory,
   isKnownSubcategory,
+  subcategoriesOf,
   topCategories,
 } from "./taxonomy";
 
 const BASE = "https://tidy-api.test";
 const ORIGIN = "http://localhost:5173";
 const OTHER_ORIGIN = "https://tidy-clone.pages.dev";
+const CLIENT_TOKEN = "test-client-token";
 
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
     ALLOWED_ORIGINS: `${OTHER_ORIGIN},${ORIGIN}`,
+    CLIENT_TOKEN,
     ...overrides,
   };
 }
@@ -33,9 +37,65 @@ function get(path: string, origin?: string): Request {
   return new Request(`${BASE}${path}`, { method: "GET", headers });
 }
 
-function post(path: string, body: unknown, origin?: string): Request {
+interface PostOptions {
+  /** `null` — не отправлять заголовок; строка — отправить заданный токен. */
+  token?: string | null;
+  /** Готовый Request (chunked/сырое тело) — заменяет автогенерируемый. */
+  request?: Request;
+}
+
+function authHeaders(token: string | null | undefined, origin?: string): Record<string, string> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (origin) headers.origin = origin;
+  if (token !== null) headers[CLIENT_TOKEN_HEADER] = token ?? CLIENT_TOKEN;
+  return headers;
+}
+
+/** Тело `/generate` ровно `targetBytes` байт: prompt ровно 800 ASCII-символов + padding. */
+function generateBody(targetBytes: number): string {
+  const prefix = '{"prompt":"';
+  const middle = '","padding":"';
+  const suffix = '"}';
+  const padding = targetBytes - prefix.length - 800 - middle.length - suffix.length;
+  return `${prefix}${"x".repeat(800)}${middle}${"y".repeat(padding)}${suffix}`;
+}
+
+function streamRequest(
+  path: string,
+  chunks: Uint8Array[],
+  options: { contentLength?: number; token?: string | null } = {},
+): { request: Request; cancelled: () => boolean; pulled: () => number } {
+  let cancelled = false;
+  let pulled = 0;
+  let index = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (index < chunks.length) {
+        pulled += 1;
+        controller.enqueue(chunks[index]!);
+        index += 1;
+      } else {
+        controller.close();
+      }
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const headers = authHeaders(options.token);
+  if (options.contentLength !== undefined) headers["content-length"] = String(options.contentLength);
+  const request = new Request(`${BASE}${path}`, {
+    method: "POST",
+    headers,
+    body: stream,
+    duplex: "half",
+  } as RequestInit);
+  return { request, cancelled: () => cancelled, pulled: () => pulled };
+}
+
+function post(path: string, body: unknown, origin?: string, options: PostOptions = {}): Request {
+  if (options.request) return options.request;
+  const headers = authHeaders(options.token, origin);
   return new Request(`${BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
 }
 
@@ -95,6 +155,7 @@ describe("CORS", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe(ORIGIN);
     expect(response.headers.get("access-control-allow-methods")).toContain("POST");
     expect(response.headers.get("access-control-allow-headers")?.toLowerCase()).toContain("content-type");
+    expect(response.headers.get("access-control-allow-headers")?.toLowerCase()).toContain(CLIENT_TOKEN_HEADER);
     expect(response.headers.get("vary")).toBe("Origin");
   });
 
@@ -118,6 +179,124 @@ describe("CORS", () => {
   it("не проставляет CORS чужому источнику", async () => {
     const response = await handleRequest(get("/health", "https://evil.example"), aiEnv(undefined));
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("разрешает превью-поддомен Pages (одна метка)", async () => {
+    const response = await handleRequest(options("/generate", "https://abc123.tidy-clone.pages.dev"), makeEnv());
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://abc123.tidy-clone.pages.dev");
+  });
+
+  it("не разрешает вложенные и похожие домены", async () => {
+    for (const origin of [
+      "https://a.b.tidy-clone.pages.dev",
+      "https://evil-tidy-clone.pages.dev",
+      "https://tidy-clone.pages.dev.evil.example",
+      "http://abc123.tidy-clone.pages.dev",
+    ]) {
+      const response = await handleRequest(options("/generate", origin), makeEnv());
+      expect(response.headers.get("access-control-allow-origin"), origin).toBeNull();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Клиентский токен
+// ---------------------------------------------------------------------------
+
+describe("клиентский токен", () => {
+  it("без секрета CLIENT_TOKEN защищённые маршруты → 503 not_configured", async () => {
+    const env = makeEnv({ CLIENT_TOKEN: undefined });
+    const generate = await handleRequest(post("/generate", { prompt: "hoodie" }), env);
+    expect(generate.status).toBe(503);
+    expect((await errorBody(generate)).code).toBe("not_configured");
+
+    const classify = await handleRequest(
+      post("/classify", { imageBase64: "AAAA", mimeType: "image/jpeg" }),
+      env,
+    );
+    expect(classify.status).toBe(503);
+  });
+
+  it("без заголовка x-tidy-client → 401 unauthorized", async () => {
+    const generate = await handleRequest(post("/generate", { prompt: "hoodie" }, undefined, { token: null }), aiEnv(undefined));
+    expect(generate.status).toBe(401);
+    expect((await errorBody(generate)).code).toBe("unauthorized");
+
+    const classify = await handleRequest(
+      post("/classify", { imageBase64: "AAAA", mimeType: "image/jpeg" }, undefined, { token: null }),
+      makeEnv({ OPENCODE_API_KEY: "key" }),
+    );
+    expect(classify.status).toBe(401);
+  });
+
+  it("неверный токен → 401 unauthorized", async () => {
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie" }, undefined, { token: "wrong-token" }),
+      aiEnv(undefined),
+    );
+    expect(response.status).toBe(401);
+    expect((await errorBody(response)).code).toBe("unauthorized");
+  });
+
+  it("верный токен пропускает запрос", async () => {
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie" }),
+      aiEnv(new Response(new Uint8Array([1]), { headers: { "content-type": "image/jpeg" } })),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ограничение тела на потоке
+// ---------------------------------------------------------------------------
+
+describe("ограничение тела на потоке", () => {
+  const LIMIT = 16 * 1024;
+
+  it("тело ровно на границе проходит", async () => {
+    const body = generateBody(LIMIT);
+    expect(new TextEncoder().encode(body).length).toBe(LIMIT);
+    const request = new Request(`${BASE}/generate`, { method: "POST", headers: authHeaders(undefined), body });
+    const response = await handleRequest(request, aiEnv(new Response(new Uint8Array([1]))));
+    expect(response.status).toBe(200);
+  });
+
+  it("Content-Length больше лимита → 413 без чтения тела", async () => {
+    const run = vi.fn(async () => new Response(new Uint8Array([1])));
+    const { request, pulled } = streamRequest("/generate", [], { contentLength: LIMIT + 1 });
+    const response = await handleRequest(request, makeEnv({ AI: { run } }));
+    expect(response.status).toBe(413);
+    expect((await errorBody(response)).code).toBe("payload_too_large");
+    expect(run).not.toHaveBeenCalled();
+    // Тело не вычитано ни на один чанк.
+    expect(pulled()).toBe(0);
+  });
+
+  it("chunked без Content-Length: тело больше лимита → 413 и поток обрывается", async () => {
+    const run = vi.fn(async () => new Response(new Uint8Array([1])));
+    const { request, cancelled, pulled } = streamRequest("/generate", [
+      new Uint8Array(LIMIT + 1),
+      new Uint8Array(LIMIT),
+      new Uint8Array(LIMIT),
+      new Uint8Array(LIMIT),
+      new Uint8Array(LIMIT),
+    ]);
+    const response = await handleRequest(request, makeEnv({ AI: { run } }));
+    expect(response.status).toBe(413);
+    expect((await errorBody(response)).code).toBe("payload_too_large");
+    expect(run).not.toHaveBeenCalled();
+    expect(cancelled()).toBe(true);
+    // Всё тело не вычитано: чтение прекращено на первом же превышении.
+    expect(pulled()).toBeLessThan(5);
+  });
+
+  it("chunked ровно на границе проходит", async () => {
+    const body = new TextEncoder().encode(generateBody(LIMIT));
+    const { request } = streamRequest("/generate", [body.subarray(0, 8000), body.subarray(8000)]);
+    const response = await handleRequest(request, aiEnv(new Response(new Uint8Array([1]))));
+    expect(response.status).toBe(200);
   });
 });
 
@@ -186,7 +365,7 @@ describe("POST /generate: валидация", () => {
   });
 
   it("битый JSON → 400", async () => {
-    const request = new Request(`${BASE}/generate`, { method: "POST", body: "{not json" });
+    const request = new Request(`${BASE}/generate`, { method: "POST", headers: authHeaders(undefined), body: "{not json" });
     const response = await handleRequest(request, aiEnv(undefined));
     expect(response.status).toBe(400);
     expect((await errorBody(response)).code).toBe("invalid_input");
@@ -196,6 +375,88 @@ describe("POST /generate: валидация", () => {
     const response = await handleRequest(post("/generate", { prompt: "x".repeat(20_000) }), aiEnv(undefined));
     expect(response.status).toBe(413);
     expect((await errorBody(response)).code).toBe("payload_too_large");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ограничение частоты
+// ---------------------------------------------------------------------------
+
+describe("ограничение частоты", () => {
+  it("отказ лимитера → 429 rate_limited", async () => {
+    const limiter = { limit: vi.fn(async () => ({ success: false })) };
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie" }),
+      makeEnv({
+        AI: { run: vi.fn(async () => new Response(new Uint8Array([1]))) },
+        GENERATE_RATE_LIMITER: limiter,
+      }),
+    );
+    expect(response.status).toBe(429);
+    expect((await errorBody(response)).code).toBe("rate_limited");
+  });
+
+  it("успешный лимит пропускает запрос, ключ — хэш IP, а не IP", async () => {
+    const limiter = { limit: vi.fn(async (_options: { key: string }) => ({ success: true })) };
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie" }),
+      makeEnv({
+        AI: { run: vi.fn(async () => new Response(new Uint8Array([1]))) },
+        GENERATE_RATE_LIMITER: limiter,
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(limiter.limit).toHaveBeenCalledTimes(1);
+    const key = (limiter.limit.mock.calls[0]![0] as { key: string }).key;
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("генерация и классификация используют разные лимитеры", async () => {
+    const generateLimiter = { limit: vi.fn(async () => ({ success: false })) };
+    const classifyLimiter = { limit: vi.fn(async () => ({ success: true })) };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => visionResponse(JSON.stringify({ category: "Обувь", subcategory: "кроссовки", confidence: 0.9 }))),
+    );
+    const env = makeEnv({ OPENCODE_API_KEY: "key", GENERATE_RATE_LIMITER: generateLimiter, CLASSIFY_RATE_LIMITER: classifyLimiter });
+
+    const generateResponse = await handleRequest(
+      post("/generate", { prompt: "hoodie" }),
+      { ...env, AI: { run: vi.fn(async () => new Response(new Uint8Array([1]))) } },
+    );
+    expect(generateResponse.status).toBe(429);
+    expect(generateLimiter.limit).toHaveBeenCalled();
+
+    const classifyResponse = await handleRequest(
+      post("/classify", { imageBase64: "AAAA", mimeType: "image/jpeg" }),
+      env,
+    );
+    expect(classifyResponse.status).toBe(200);
+    expect(classifyLimiter.limit).toHaveBeenCalled();
+  });
+
+  it("сбой лимитера не роняет сервис (fail-open)", async () => {
+    const limiter = {
+      limit: vi.fn(async () => {
+        throw new Error("limiter down");
+      }),
+    };
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie" }),
+      makeEnv({
+        AI: { run: vi.fn(async () => new Response(new Uint8Array([1]))) },
+        GENERATE_RATE_LIMITER: limiter,
+      }),
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it("без binding лимитера запрос проходит (локальный запуск)", async () => {
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie" }),
+      makeEnv({ AI: { run: vi.fn(async () => new Response(new Uint8Array([1]))) } }),
+    );
+    expect(response.status).toBe(200);
   });
 });
 
@@ -263,6 +524,30 @@ describe("POST /generate: модель", () => {
     expect(input).toEqual({ prompt: "hoodie", steps: 4 });
     expect(input).not.toHaveProperty("width");
     expect(input).not.toHaveProperty("height");
+  });
+
+  it("таймаут генерации отменяет подзапрос через AbortSignal", async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      const run = vi.fn(
+        (_model: string, _input: Record<string, unknown>, options?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener("abort", () => {
+              aborted = true;
+              reject(new Error("aborted"));
+            });
+          }),
+      );
+      const pending = handleRequest(post("/generate", { prompt: "hoodie" }), makeEnv({ AI: { run } }));
+      await vi.advanceTimersByTimeAsync(30_000);
+      const response = await pending;
+      expect(response.status).toBe(504);
+      expect((await errorBody(response)).code).toBe("model_timeout");
+      expect(aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -472,7 +757,7 @@ describe("POST /classify: vision-модель", () => {
 // ---------------------------------------------------------------------------
 
 describe("таксономия", () => {
-  it("содержит 8 верхних категорий из ADR-0004", () => {
+  it("содержит 8 верхних категорий ADR-0004 и «Разное» — как корневая таксономия", () => {
     expect(topCategories()).toEqual([
       "Верх",
       "Низ",
@@ -482,7 +767,14 @@ describe("таксономия", () => {
       "Обувь",
       "Аксессуары",
       "Бельё",
+      FALLBACK_CATEGORY,
     ]);
+  });
+
+  it("согласована с корнем: у «Разное» есть подкатегория и это известная категория", () => {
+    expect(subcategoriesOf(FALLBACK_CATEGORY)).toEqual([FALLBACK_SUBCATEGORY]);
+    expect(isKnownCategory(FALLBACK_CATEGORY)).toBe(true);
+    expect(isKnownSubcategory(FALLBACK_CATEGORY, FALLBACK_SUBCATEGORY)).toBe(true);
   });
 
   it("приводит регистр к каноническому виду", () => {

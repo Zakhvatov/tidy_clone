@@ -1,0 +1,13 @@
+
+ RUN  v3.2.7 /Users/aleksandrzahvatov/orca/projects/tidy_clone
+
+stdout | src/services/wardrobe.test.ts > Чтение гардероба (T13) > 50 вещей: чтение и группировка укладываются в порог
+[T13 perf] loadWardrobe: 0.4 мс, группировка: 0.0 мс, вещей: 50
+
+ ✓ src/services/wardrobe.test.ts (6 tests) 27ms
+
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+   Start at  02:47:56
+   Duration  866ms (transform 53ms, setup 121ms, collect 67ms, tests 27ms, environment 417ms, prepare 39ms)
+

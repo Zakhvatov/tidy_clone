@@ -18,3 +18,9 @@ __pycache__/
 # pi goal runtime
 .pi/
 .agents/
+
+# локальные секреты и переменные окружения
+.env
+.env.local
+.env.*.local
+workers/api/.dev.vars

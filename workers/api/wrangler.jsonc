@@ -10,6 +10,20 @@
   "ai": {
     "binding": "AI"
   },
+  // Cloudflare Workers Rate Limiting. Два правила: генерация и классификация.
+  // namespace_id — числа, уникальные в пределах аккаунта; limit/period — запросы в секунды.
+  "ratelimits": [
+    {
+      "name": "GENERATE_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 20, "period": 60 }
+    },
+    {
+      "name": "CLASSIFY_RATE_LIMITER",
+      "namespace_id": "1002",
+      "simple": { "limit": 40, "period": 60 }
+    }
+  ],
   "vars": {
     // Настраиваемый список источников для CORS (через запятую).
     "ALLOWED_ORIGINS": "https://tidy-clone.pages.dev,http://localhost:5173"
