@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { FALLBACK_SUB, FALLBACK_TOP } from '../domain/taxonomy'
 import {
@@ -35,6 +35,10 @@ function fakeFetch(response: Response) {
 function smallJpeg(): Blob {
   return new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/jpeg' })
 }
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
 
 describe('classify-photo: служебное', () => {
   it('базовый URL берётся из параметра, иначе — из env, иначе default', () => {
@@ -190,8 +194,49 @@ describe('classify-photo: запрос к воркеру', () => {
     expect(calls).toHaveLength(1)
   })
 
-  it('неподдерживаемый формат → unsupported_media', async () => {
-    const error = await classifyPhoto(new Blob([new Uint8Array(4)], { type: 'image/gif' }), {
+  it('отправляет x-tidy-client, когда токен задан явно', async () => {
+    const { impl, calls } = fakeFetch(
+      jsonResponse(200, { category: 'Верх', subcategory: 'футболка', confidence: 0.9 }),
+    )
+    await classifyPhoto(smallJpeg(), { fetchImpl: impl, clientToken: 'secret-token' })
+    const headers = calls[0]?.init?.headers as Record<string, string>
+    expect(headers['x-tidy-client']).toBe('secret-token')
+  })
+
+  it('берёт токен из VITE_TIDY_CLIENT_TOKEN, когда явный не передан', async () => {
+    vi.stubEnv('VITE_TIDY_CLIENT_TOKEN', 'env-token')
+    const { impl, calls } = fakeFetch(jsonResponse(200, { category: 'Верх', subcategory: 'топ', confidence: 0.5 }))
+    await classifyPhoto(smallJpeg(), { fetchImpl: impl })
+    const headers = calls[0]?.init?.headers as Record<string, string>
+    expect(headers['x-tidy-client']).toBe('env-token')
+  })
+
+  it('без токена заголовок не отправляется (явно «не настроено»)', async () => {
+    const { impl, calls } = fakeFetch(jsonResponse(200, { category: 'Верх', subcategory: 'топ', confidence: 0.5 }))
+    await classifyPhoto(smallJpeg(), { fetchImpl: impl, clientToken: null })
+    const headers = calls[0]?.init?.headers as Record<string, string>
+    expect(headers['x-tidy-client']).toBeUndefined()
+  })
+
+  it('401 unauthorized → понятная ошибка с кодом', async () => {
+    const { impl } = fakeFetch(
+      jsonResponse(401, { error: { code: 'unauthorized', message: 'Неверный или отсутствующий клиентский токен' } }),
+    )
+    const error = await classifyPhoto(smallJpeg(), { fetchImpl: impl }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ClassifyError)
+    expect(error).toMatchObject({ code: 'unauthorized', status: 401 })
+  })
+
+  it('429 rate_limited → понятная ошибка с кодом', async () => {
+    const { impl } = fakeFetch(
+      jsonResponse(429, { error: { code: 'rate_limited', message: 'Слишком много запросов, попробуйте позже' } }),
+    )
+    const error = await classifyPhoto(smallJpeg(), { fetchImpl: impl }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ClassifyError)
+    expect(error).toMatchObject({ code: 'rate_limited', status: 429 })
+  })
+
+  it('неподдерживаемый формат → unsupported_media', async () => {    const error = await classifyPhoto(new Blob([new Uint8Array(4)], { type: 'image/gif' }), {
       fetchImpl: vi.fn() as unknown as typeof fetch,
     }).catch((e: unknown) => e)
     expect(error).toMatchObject({ code: 'unsupported_media' })

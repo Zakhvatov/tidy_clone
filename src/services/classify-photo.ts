@@ -50,6 +50,8 @@ const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/he
 /** Коды ошибок клиента. `not_configured` приходит от воркера (нет секрета). */
 export type ClassifyErrorCode =
   | 'not_configured'
+  | 'unauthorized'
+  | 'rate_limited'
   | 'image_too_large'
   | 'unsupported_media'
   | 'bad_request'
@@ -94,6 +96,11 @@ export interface ClassifyPhotoOptions {
   maxBodyBytes?: number
   /** `null` отключает сжатие (среда без canvas): тогда слишком большой файл — ошибка. */
   resize?: ImageResizer | null
+  /**
+   * Клиентский токен воркера. По умолчанию берётся из `VITE_TIDY_CLIENT_TOKEN`.
+   * `null` или пустая строка — запрос без заголовка `x-tidy-client` (воркер ответит 401).
+   */
+  clientToken?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +112,17 @@ export function apiBaseUrl(explicit?: string): string {
   const fromEnv = import.meta.env?.VITE_TIDY_API_URL
   const value = explicit ?? fromEnv ?? DEFAULT_API_URL
   return value.trim().replace(/\/+$/, '')
+}
+
+/**
+ * Клиентский токен воркера. Если `VITE_TIDY_CLIENT_TOKEN` не задан, возвращается `null`
+ * и запрос уйдёт без заголовка — это явно «не настроено», а не тихий обход защиты
+ * (воркер ответит 401 `unauthorized`).
+ */
+export function clientTokenFromEnv(explicit?: string | null): string | null {
+  const value = explicit === undefined ? import.meta.env?.VITE_TIDY_CLIENT_TOKEN : explicit
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : null
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +289,18 @@ async function errorFromResponse(response: Response): Promise<ClassifyError> {
       { status: response.status },
     )
   }
+  if (response.status === 401 || code === 'unauthorized') {
+    return new ClassifyError('unauthorized', message || 'Распознавание недоступно: неверный клиентский токен', {
+      status: response.status,
+    })
+  }
+  if (response.status === 429 || code === 'rate_limited') {
+    return new ClassifyError(
+      'rate_limited',
+      message || 'Слишком много запросов на распознавание. Подождите минуту и попробуйте снова.',
+      { status: response.status },
+    )
+  }
   if (response.status === 413 || code === 'payload_too_large') {
     return new ClassifyError('image_too_large', message || 'Фото слишком большое для распознавания', {
       status: response.status,
@@ -352,11 +382,15 @@ export async function classifyPhoto(
   // Сигнал мог сработать, пока читали и кодировали файл: повторного события не будет.
   if (options.signal?.aborted) controller.abort()
 
+  const clientToken = clientTokenFromEnv(options.clientToken)
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  if (clientToken !== null) headers['x-tidy-client'] = clientToken
+
   let response: Response
   try {
     response = await fetchImpl(`${apiBaseUrl(options.baseUrl)}/classify`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body,
       signal: controller.signal,
     })

@@ -1,0 +1,153 @@
+.lead {
+  margin: -12px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+}
+
+.linkForm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-surface);
+  outline: none;
+  transition: border-color var(--motion-fast) var(--motion-ease);
+}
+
+.input:focus {
+  border-color: var(--color-accent);
+}
+
+.input:disabled {
+  color: var(--color-text-secondary);
+}
+
+.submit {
+  padding: 14px 16px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: #ffffff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity var(--motion-fast) var(--motion-ease);
+}
+
+.submit:active {
+  opacity: 0.85;
+}
+
+.submit:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.orGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: -8px 0;
+}
+
+.orLine {
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.orText {
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.fileButton {
+  display: block;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease);
+}
+
+.fileButton:active {
+  background: var(--color-surface);
+}
+
+.fileInput {
+  display: none;
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: var(--space-edge);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-bg);
+}
+
+.skeletonImage,
+.skeletonLine {
+  border-radius: var(--radius-chip);
+  background: var(--color-surface);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.skeletonImage {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+}
+
+.skeletonBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skeletonLine {
+  height: 16px;
+}
+
+.skeletonLineShort {
+  width: 55%;
+  height: 16px;
+  border-radius: var(--radius-chip);
+  background: var(--color-surface);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.loadingText {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  text-align: center;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonImage,
+  .skeletonLine,
+  .skeletonLineShort {
+    animation: none;
+  }
+}

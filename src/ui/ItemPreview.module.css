@@ -1,0 +1,98 @@
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-edge);
+  padding: var(--space-edge);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-bg);
+  animation: preview-in var(--motion-base) var(--motion-ease);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.badge {
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.attrs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attr {
+  display: flex;
+  gap: 8px;
+  font-size: 15px;
+}
+
+.attrLabel {
+  flex: 0 0 84px;
+  color: var(--color-text-secondary);
+}
+
+.attrValue {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.save {
+  padding: 15px 16px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity var(--motion-fast) var(--motion-ease);
+}
+
+.save:active {
+  opacity: 0.85;
+}
+
+.save:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+@keyframes preview-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    animation: none;
+  }
+}

@@ -1,0 +1,14 @@
+Пакшот WB nmId=14058746 photo=1
+  https://basket-01.wbbasket.ru/vol140/part14058/14058746/images/big/1.webp
+  скачано 43852 байт → /Users/aleksandrzahvatov/orca/projects/tidy_clone/docs/evidence/raw/t9-source.webp
+  размер 900×1200
+
+Результат
+  прозрачных пикселей: 58.28%
+  выживших (альфа ≥ 128): 41.72%
+  suspicious: false
+  максимум изменения RGB у выживших: 0
+  прозрачных на входе: 0.00%
+  вырез:  /Users/aleksandrzahvatov/orca/projects/tidy_clone/docs/evidence/raw/t9-cutout.png
+  превью: /Users/aleksandrzahvatov/orca/projects/tidy_clone/docs/evidence/raw/t9-preview.png
+  PNG-сигнатуры на месте
