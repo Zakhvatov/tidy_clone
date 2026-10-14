@@ -216,15 +216,18 @@ function какОшибкаИмпорта(cause: unknown, stage: 'link' | 'card'
   if (cause instanceof ОшибкаСсылкиWildberries) {
     return new ОшибкаИмпортаВещи('link', cause.message, { cause })
   }
-  const message = cause instanceof ОшибкаЗагрузкиКарточки ? cause.message : ''
-  if (message.includes('вовремя')) return new ОшибкаИмпортаВещи('network', message, { cause })
-  if (message.includes('не найден')) return new ОшибкаИмпортаВещи('not_found', message, { cause })
+  // Код ошибки T5 различает «товара нет» (404 на всех лоадерах) и сетевой сбой;
+  // маппим именно его, чтобы недоступная сеть не выглядела как «товар не найден».
+  if (cause instanceof ОшибкаЗагрузкиКарточки) {
+    const code = cause.code === 'network' ? 'network' : 'not_found'
+    return new ОшибкаИмпортаВещи(code, cause.message, { cause })
+  }
   if (stage === 'link') {
-    return new ОшибкаИмпортаВещи('link', message || 'Это не похоже на ссылку Wildberries', { cause })
+    return new ОшибкаИмпортаВещи('link', 'Это не похоже на ссылку Wildberries', { cause })
   }
   return new ОшибкаИмпортаВещи(
     'not_found',
-    message || 'Товар не найден на складах Wildberries. Проверьте ссылку',
+    'Товар не найден на складах Wildberries. Проверьте ссылку',
     { cause },
   )
 }

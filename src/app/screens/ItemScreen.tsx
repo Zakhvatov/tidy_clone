@@ -184,12 +184,16 @@ export function ItemScreen() {
     }
   }
 
-  async function сделатьAiВерсию() {
+  async function сделатьAiВерсию(force: boolean) {
     if (вещь === null) return
     setОшибка(null)
     setГенерация(true)
     try {
-      await digitizeItem(вещь.id)
+      if (force) {
+        await digitizeItem(вещь.id, { force: true })
+      } else {
+        await digitizeItem(вещь.id)
+      }
       const картинки = await listByItem(вещь.id)
       setИзображения(картинки)
       setВыбраннаяРоль('ai')
@@ -333,7 +337,9 @@ export function ItemScreen() {
             type="button"
             disabled={генерация}
             onClick={() => {
-              void сделатьAiВерсию()
+              // «Перегенерировать» (AI-версия уже есть) обязана генерировать
+              // заново; «Сделать AI-версию» — обычный идемпотентный запуск.
+              void сделатьAiВерсию(ai !== undefined)
             }}
           >
             {генерация

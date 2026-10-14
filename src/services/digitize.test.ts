@@ -171,6 +171,78 @@ describe('Оцифровка (T10)', () => {
     expect((await images.listByItem('вещь-1')).filter((i) => i.роль === 'ai')).toHaveLength(1)
   })
 
+  it('force: true перегенерирует: воркер вызывается, старая AI-версия заменяется, Оригинал не тронут', async () => {
+    await items.create(makeItem({ id: 'вещь-1', idИзображений: ['ор-1', 'ai-old'] }))
+    await images.addOriginal(makeImage('ор-1', 'вещь-1', 'оригинал', 'оригинал-байты'))
+    await images.addAiVersion(
+      makeImage('ai-old', 'вещь-1', 'ai', 'старая-ai', '2024-02-01T00:00:00.000Z'),
+    )
+    const оригиналДо = await images.get('ор-1')
+
+    const generate = vi.fn(async () => new Blob(['новая-ai'], { type: 'image/jpeg' }))
+    const outcome = await digitizeItem('вещь-1', {
+      ...baseDeps(),
+      generate,
+      id: () => 'ai-new',
+      force: true,
+    })
+
+    expect(outcome).toMatchObject({ way: 'ai', status: 'создано' })
+    expect(generate).toHaveBeenCalledTimes(1)
+
+    // Старая AI-версия заменена новой: ни двух AI-версий, ни осиротевшего id.
+    const aiVersions = (await images.listByItem('вещь-1')).filter((i) => i.роль === 'ai')
+    expect(aiVersions.map((i) => i.id)).toEqual(['ai-new'])
+    expect(await images.get('ai-old')).toBeUndefined()
+    expect((await items.get('вещь-1'))?.idИзображений).toEqual(['ор-1', 'ai-new'])
+
+    // Оригинал остался той же записью с тем же id и ролью. Байты через
+    // fake-indexeddb недоступны (Blob там клонируется в пустой объект), поэтому
+    // неизменность подтверждается идентификатором, ролью и единственностью
+    // Оригинала: перегенерация его не добавляла и не удаляла.
+    const оригинал = await images.get('ор-1')
+    expect(оригинал?.id).toBe('ор-1')
+    expect(оригинал?.роль).toBe('оригинал')
+    expect(оригиналДо?.id).toBe('ор-1')
+    expect((await images.listByItem('вещь-1')).filter((i) => i.роль === 'оригинал')).toHaveLength(1)
+  })
+
+  it('force: true создаёт AI-версию, даже если её ещё не было', async () => {
+    await items.create(makeItem({ id: 'вещь-1' }))
+    await images.addOriginal(makeImage('ор-1', 'вещь-1', 'оригинал', 'orig'))
+    const generate = vi.fn(async () => new Blob(['ai'], { type: 'image/jpeg' }))
+
+    const outcome = await digitizeItem('вещь-1', {
+      ...baseDeps(),
+      generate,
+      id: () => 'ai-1',
+      force: true,
+    })
+
+    expect(outcome).toMatchObject({ way: 'ai', status: 'создано' })
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(await images.get('ai-1')).toBeDefined()
+  })
+
+  it('массовая оцифровка пропускает уже оцифрованное, даже если force лежит в deps', async () => {
+    await items.create(makeItem({ id: 'с-ai' }))
+    await images.addOriginal(makeImage('ор-1', 'с-ai', 'оригинал', 'x'))
+    await images.addAiVersion(makeImage('ai-гот', 'с-ai', 'ai', 'x'))
+
+    const generate = vi.fn(async () => new Blob(['ai'], { type: 'image/jpeg' }))
+    const результаты = await digitizeMissing({
+      ...baseDeps(),
+      generate,
+      analyze: async () => MODEL,
+      cutout: async () => cutoutResult('cut'),
+      force: true,
+    })
+
+    expect(результаты).toEqual([])
+    expect(generate).not.toHaveBeenCalled()
+    expect((await images.listByItem('с-ai')).filter((i) => i.роль === 'ai')).toHaveLength(1)
+  })
+
   it('digitizeMissing: пакшот → вырез, модельное → AI, вещь с вырезом не трогается', async () => {
     await items.create(makeItem({ id: 'пакшот' }))
     await items.create(makeItem({ id: 'модель' }))

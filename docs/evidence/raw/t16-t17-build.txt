@@ -1,0 +1,25 @@
+
+> tidy-clone@0.1.0 build
+> tsc --noEmit && vite build
+
+[36mvite v7.3.7 [32mbuilding client environment for production...[36m[39m
+transforming...
+[32m✓[39m 105 modules transformed.
+rendering chunks...
+[33m[plugin vite:reporter] 
+(!) /Users/aleksandrzahvatov/orca/projects/tidy_clone/src/services/digitize.ts is dynamically imported by /Users/aleksandrzahvatov/orca/projects/tidy_clone/src/app/screens/digitizeBridge.ts but also statically imported by /Users/aleksandrzahvatov/orca/projects/tidy_clone/src/services/digitize-queue.ts, dynamic import will not move module into another chunk.
+[39m
+computing gzip size...
+[2mdist/[22m[32mmanifest.webmanifest                        [39m[1m[2m  0.62 kB[22m[1m[22m
+[2mdist/[22m[32mindex.html                                  [39m[1m[2m  0.96 kB[22m[1m[22m[2m │ gzip:   0.46 kB[22m
+[2mdist/[22m[2massets/[22m[35mindex-CW_YzbOZ.css                   [39m[1m[2m 26.22 kB[22m[1m[22m[2m │ gzip:   4.27 kB[22m
+[2mdist/[22m[2massets/[22m[36mworkbox-window.prod.es5-BBnX5xw4.js  [39m[1m[2m  5.75 kB[22m[1m[22m[2m │ gzip:   2.36 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-BhDmuq4F.js                    [39m[1m[2m379.28 kB[22m[1m[22m[2m │ gzip: 117.95 kB[22m
+[32m✓ built in 3.19s[39m
+
+[36mPWA v1.3.0[39m
+mode      [35mgenerateSW[39m
+precache  [32m14 entries[39m [2m(437.65 KiB)[22m
+files generated
+  [2mdist/sw.js[22m
+  [2mdist/workbox-9c191d2f.js[22m

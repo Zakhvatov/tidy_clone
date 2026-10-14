@@ -164,22 +164,46 @@ describe('loadWbCard', () => {
     expect(fetchImpl).toHaveBeenCalled()
   })
 
-  it('бросает понятную ошибку, если ни один лоадер не ответил', async () => {
+  it('404 на всех лоадерах — это not_found, а не сетевой сбой', async () => {
     const fetchImpl = makeFetch({})
-    await expect(loadWbCard(16020837, fetchImpl)).rejects.toThrow(ОшибкаЗагрузкиКарточки)
-    await expect(loadWbCard(16020837, fetchImpl)).rejects.toThrow(
-      'Товар не найден на складах Wildberries',
-    )
+    const error = await loadWbCard(16020837, fetchImpl).catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(ОшибкаЗагрузкиКарточки)
+    expect(error).toMatchObject({ code: 'not_found' })
+    expect((error as Error).message).toBe('Товар не найден на складах Wildberries')
   })
 
-  it('переживает сетевые сбои и всё равно бросает понятную ошибку', async () => {
+  it('всегда бросающий fetch — это code network, а не «товар не найден»', async () => {
     const fetchImpl = (async () => {
       throw new Error('network down')
     }) as unknown as typeof fetch
 
-    await expect(loadWbCard(16020837, fetchImpl)).rejects.toThrow(
-      'Товар не найден на складах Wildberries',
-    )
+    const error = await loadWbCard(16020837, fetchImpl).catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(ОшибкаЗагрузкиКарточки)
+    expect(error).toMatchObject({ code: 'network' })
+    expect((error as Error).message).toMatch(/соединени/i)
+    expect((error as Error).message).not.toContain('не найден')
+  })
+
+  it('5xx — сетевой сбой: перебор прекращается, ошибка network', async () => {
+    const fetchImpl = makeFetch({
+      'https://basket-02.wbbasket.ru/vol160/part16020/16020837/info/ru/card.json': 503,
+    })
+
+    const error = await loadWbCard(16020837, fetchImpl).catch((cause: unknown) => cause)
+    expect(error).toMatchObject({ code: 'network' })
+  })
+
+  it('404 на первом лоадере и успех на втором — вещь загружается', async () => {
+    // Расчётный для vol=160 — basket-02 (отдаёт 404), соседний basket-01 — 200.
+    const neighbor = 'https://basket-01.wbbasket.ru/vol160/part16020/16020837'
+    const fetchImpl = makeFetch({
+      [`${neighbor}/info/ru/card.json`]: { nm_id: 16020837, imt_name: 'Нашлась' },
+      [`${neighbor}/info/sellers.json`]: { supplierName: 'ИП Тестов' },
+    })
+
+    const result = await loadWbCard(16020837, fetchImpl)
+    expect(result.name).toBe('Нашлась')
+    expect(result.sellerName).toBe('ИП Тестов')
   })
 
   it('отвергает некорректный nmId до сетевых вызовов', async () => {

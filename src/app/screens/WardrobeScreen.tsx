@@ -113,7 +113,7 @@ export function WardrobeScreen() {
                     <button
                       className={styles.card}
                       type="button"
-                      onClick={() => navigate('/')}
+                      onClick={() => navigate(`/item/${entry.вещь.id}`)}
                       aria-label={название}
                     >
                       <ItemImage blob={изображение?.blob} alt={название} />

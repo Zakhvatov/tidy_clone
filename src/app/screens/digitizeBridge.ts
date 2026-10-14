@@ -11,8 +11,13 @@
  * сохраняет её с ролью `ai`, возвращая результат. Оригинал не трогается.
  */
 
+/** Настройки оцифровки из карточки: `force` — кнопка «Перегенерировать». */
+export interface ОпцииОцифровки {
+  force?: boolean
+}
+
 /** Оцифровка одной вещи. Возвращаемое значение карточке не нужно. */
-export type ОцифроватьВещь = (idВещи: string) => Promise<unknown>
+export type ОцифроватьВещь = (idВещи: string, options?: ОпцииОцифровки) => Promise<unknown>
 
 /** Сервис ещё не появился в дереве — оцифровка недоступна. */
 export class ОшибкаОцифровкиНедоступна extends Error {
@@ -29,12 +34,15 @@ const модули = import.meta.glob('../../services/digitize.ts')
  * сервиса не роняло сборку и тесты, а всплывало понятной ошибкой только при
  * нажатии кнопки.
  */
-export async function digitizeItem(idВещи: string): Promise<unknown> {
+export async function digitizeItem(
+  idВещи: string,
+  options: ОпцииОцифровки = {},
+): Promise<unknown> {
   const загрузить = Object.values(модули)[0]
   if (загрузить === undefined) throw new ОшибкаОцифровкиНедоступна()
 
   const модуль = (await загрузить()) as { digitizeItem?: ОцифроватьВещь }
   if (typeof модуль.digitizeItem !== 'function') throw new ОшибкаОцифровкиНедоступна()
 
-  return модуль.digitizeItem(idВещи)
+  return модуль.digitizeItem(idВещи, options)
 }

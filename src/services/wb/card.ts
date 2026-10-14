@@ -180,19 +180,44 @@ function buildWbCard(
   }
 }
 
-/** Загружает JSON; при любой ошибке/не-200 возвращает `null`, а не бросает. */
+/**
+ * Итог одного запроса JSON.
+ *
+ * `missing` — лоадер ответил 404: этого товара на нём нет, перебор продолжается.
+ * `network` — fetch бросил, истёк таймаут или лоадер ответил 5xx/иным не-404
+ * статусом: это сбой связи, а не «товар не найден», и перебор надо прервать.
+ */
+type JsonFetch =
+  | { kind: 'ok'; data: unknown }
+  | { kind: 'missing' }
+  | { kind: 'network'; cause: unknown }
+
+/** Загружает JSON, различая «нет на этом лоадере» (404) и сетевой сбой. */
 async function fetchJson(
   url: string,
   fetchImpl: typeof fetch,
   signal: AbortSignal,
-): Promise<unknown | null> {
+): Promise<JsonFetch> {
   try {
     const response = await fetchImpl(url, { signal })
-    if (!response.ok) return null
-    return await response.json()
-  } catch {
-    return null
+    if (response.status === 404) return { kind: 'missing' }
+    if (!response.ok) {
+      return { kind: 'network', cause: new Error(`Wildberries ответил кодом ${response.status}`) }
+    }
+    return { kind: 'ok', data: await response.json() }
+  } catch (cause) {
+    return { kind: 'network', cause }
   }
+}
+
+/** Понятная ошибка связи: таймаут называем таймаутом, остальное — сетью. */
+function networkError(timedOut: boolean, cause: unknown): ОшибкаЗагрузкиКарточки {
+  return new ОшибкаЗагрузкиКарточки(
+    timedOut
+      ? 'Wildberries не ответил вовремя, попробуйте ещё раз'
+      : 'Не удалось связаться с Wildberries. Проверьте соединение и попробуйте снова',
+    { code: 'network', cause },
+  )
 }
 
 /**
@@ -213,16 +238,24 @@ export async function loadWbCard(nmId: number, fetchImpl: typeof fetch = fetch):
     for (const basket of basketCandidates(nmId)) {
       const base = buildCardUrl(nmId, basket)
       const cardRaw = await fetchJson(`${base}/info/ru/card.json`, fetchImpl, controller.signal)
-      if (cardRaw === null) continue
+      // Сетевой сбой не маскируем под «нет товара»: прекращаем перебор и
+      // сообщаем о соединении. Дальше искать по соседним лоадерам бессмысленно.
+      if (cardRaw.kind === 'network') {
+        throw networkError(controller.signal.aborted, cardRaw.cause)
+      }
+      // 404 — товара нет именно на этом лоадере, пробуем следующий.
+      if (cardRaw.kind === 'missing') continue
 
+      // sellers.json необязателен: карточка уже найдена, и его сбой не должен
+      // отменять загрузку — просто остаёмся без данных продавца.
       const sellerRaw = await fetchJson(`${base}/info/sellers.json`, fetchImpl, controller.signal)
-      return buildWbCard(nmId, base, cardRaw, sellerRaw)
+      return buildWbCard(nmId, base, cardRaw.data, sellerRaw.kind === 'ok' ? sellerRaw.data : undefined)
     }
 
     if (controller.signal.aborted) {
-      throw new ОшибкаЗагрузкиКарточки('Wildberries не ответил вовремя, попробуйте ещё раз')
+      throw networkError(true, undefined)
     }
-    throw new ОшибкаЗагрузкиКарточки('Товар не найден на складах Wildberries')
+    throw new ОшибкаЗагрузкиКарточки('Товар не найден на складах Wildberries', { code: 'not_found' })
   } finally {
     clearTimeout(timer)
   }

@@ -8,8 +8,8 @@
 
 /** Базовая ошибка работы с Wildberries. */
 export class ОшибкаWildberries extends Error {
-  constructor(message: string) {
-    super(message)
+  constructor(message: string, options: { cause?: unknown } = {}) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause })
     this.name = 'ОшибкаWildberries'
   }
 }
@@ -22,10 +22,25 @@ export class ОшибкаСсылкиWildberries extends ОшибкаWildberries
   }
 }
 
+/**
+ * Почему карточку не удалось загрузить.
+ *
+ * `not_found` — все лоадеры ответили 404: товара по этой ссылке нет.
+ * `network` — сеть недоступна, таймаут или 5xx: это не «товар не найден»,
+ * и маскировать сбой под 404 нельзя.
+ */
+export type CardLoadErrorCode = 'not_found' | 'network'
+
 /** Не удалось загрузить карточку товара (нет на складах, сеть, таймаут). */
 export class ОшибкаЗагрузкиКарточки extends ОшибкаWildberries {
-  constructor(message: string) {
-    super(message)
+  readonly code: CardLoadErrorCode
+
+  constructor(
+    message: string,
+    options: { code?: CardLoadErrorCode; cause?: unknown } = {},
+  ) {
+    super(message, options)
     this.name = 'ОшибкаЗагрузкиКарточки'
+    this.code = options.code ?? 'not_found'
   }
 }

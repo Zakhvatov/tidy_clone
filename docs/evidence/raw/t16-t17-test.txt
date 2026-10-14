@@ -1,0 +1,50 @@
+
+> tidy-clone@0.1.0 test
+> vitest run
+
+
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90m/Users/aleksandrzahvatov/orca/projects/tidy_clone[39m
+
+ [32m✓[39m src/services/digitize.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 93[2mms[22m[39m
+ [32m✓[39m src/ui/DigitizePanel.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 251[2mms[22m[39m
+ [32m✓[39m src/app/routing.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 483[2mms[22m[39m
+ [32m✓[39m src/app/sw.test.tsx [2m([22m[2m1 test[22m[2m)[22m[32m 143[2mms[22m[39m
+ [32m✓[39m src/services/digitize-queue.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 402[2mms[22m[39m
+ [32m✓[39m src/app/screens/ItemScreen.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 1324[2mms[22m[39m
+   [33m[2m✓[22m[39m Карточка вещи (T15)[2m > [22mпо id показывает данные вещи: название, атрибуты, источник и категорию [33m 390[2mms[22m[39m
+[90mstdout[2m | src/services/wardrobe.test.ts[2m > [22m[2mЧтение гардероба (T13)[2m > [22m[2m50 вещей: чтение и группировка укладываются в порог
+[22m[39m[T13 perf] loadWardrobe: 2.6 мс, группировка: 0.0 мс, вещей: 50
+
+ [32m✓[39m src/services/wardrobe.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 103[2mms[22m[39m
+ [32m✓[39m src/app/screens/AddScreen.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1357[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран добавления вещи (T8)[2m > [22mсохраняет вещь по ссылке с Оригиналом и категорией из словаря [33m 522[2mms[22m[39m
+ [32m✓[39m src/app/screens/WardrobeScreen.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 1366[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран гардероба (T13)[2m > [22mпустой гардероб: пустое состояние и кнопка «Добавить вещь» ведёт на /add [33m 459[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран гардероба (T13)[2m > [22m50 вещей: 8+1 секция, счётчики и порядок секций по ADR-0004 [33m 658[2mms[22m[39m
+ [32m✓[39m src/services/tidy-api.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 34[2mms[22m[39m
+ [32m✓[39m src/services/classify-photo.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 90[2mms[22m[39m
+ [32m✓[39m src/domain/wb-taxonomy.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m src/ui/ItemImage.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 40[2mms[22m[39m
+ [32m✓[39m src/services/cutout.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m src/storage/storage.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 136[2mms[22m[39m
+ [32m✓[39m src/services/import-item.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m src/app/screens/OutfitEditorScreen.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 3037[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mдобавляет вещь из пикера в коллаж одним нажатием [33m 680[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mперетаскивание меняет позицию и сохраняется [33m 313[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mизменение порядка слоёв и подложки сохраняется [33m 843[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mобраз из 5 вещей собирается через UI, сохраняется и перечитывается после перезапуска [33m 781[2mms[22m[39m
+ [32m✓[39m src/domain/prompt-templates.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m src/services/wb/card.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m src/services/wb/packshot.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m src/app/screens/digitizeBridge.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m src/services/wb/parse-link.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m src/app/manifest.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m src/services/outfit-background.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m src/services/outfit-render.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m src/domain/taxonomy.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m26 passed[39m[22m[90m (26)[39m
+[2m      Tests [22m [1m[32m226 passed[39m[22m[90m (226)[39m
+[2m   Start at [22m 03:39:25
+[2m   Duration [22m 5.69s[2m (transform 1.33s, setup 3.62s, collect 5.95s, tests 9.01s, environment 13.16s, prepare 1.76s)[22m
+

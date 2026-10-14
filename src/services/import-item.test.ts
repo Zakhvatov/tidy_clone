@@ -93,6 +93,34 @@ describe('import-item: вход «ссылка»', () => {
     expect(draft.подкатегория).toBe('платье')
   })
 
+  it('сетевой сбой карточки даёт код network, а не «товар не найден»', async () => {
+    const fetchImpl = (async () => {
+      throw new Error('network down')
+    }) as unknown as typeof fetch
+
+    const error = await createDraftFromLink(
+      'https://www.wildberries.ru/catalog/111/detail.aspx',
+      { fetchImpl },
+    ).catch((cause: unknown) => cause)
+
+    expect(error).toBeInstanceOf(ОшибкаИмпортаВещи)
+    expect((error as ОшибкаИмпортаВещи).code).toBe('network')
+    expect((error as Error).message).not.toContain('не найден')
+  })
+
+  it('404 на всех лоадерах — код not_found', async () => {
+    const fetchImpl = (async () =>
+      new Response('', { status: 404 })) as unknown as typeof fetch
+
+    const error = await createDraftFromLink(
+      'https://www.wildberries.ru/catalog/111/detail.aspx',
+      { fetchImpl },
+    ).catch((cause: unknown) => cause)
+
+    expect(error).toBeInstanceOf(ОшибкаИмпортаВещи)
+    expect((error as ОшибкаИмпортаВещи).code).toBe('not_found')
+  })
+
   it('офлайн и мусорная ссылка дают понятные ошибки', async () => {
     const original = Object.getOwnPropertyDescriptor(navigator, 'onLine')
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false })

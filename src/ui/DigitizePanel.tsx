@@ -1,4 +1,6 @@
 import { useDigitizeQueue } from './useDigitizeQueue'
+import { OfflineNotice } from './OfflineNotice'
+import { useOnline } from './useOnline'
 import styles from './DigitizePanel.module.css'
 
 /** Понятный текст статуса очереди для панели. */
@@ -29,6 +31,7 @@ function статусТекст(статус: string): string {
  */
 export function DigitizePanel() {
   const { progress, busy, resumable, startError, start, resume, stop } = useDigitizeQueue()
+  const online = useOnline()
 
   const всего = progress.всего
   const обработано = progress.обработано
@@ -37,6 +40,7 @@ export function DigitizePanel() {
 
   return (
     <section className={styles.panel}>
+      {!online && <OfflineNotice />}
       <div className={styles.header}>
         <h2 className={styles.title}>{статусТекст(progress.статус)}</h2>
         {busy ? (

@@ -1,0 +1,17 @@
+
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90m/Users/aleksandrzahvatov/orca/projects/tidy_clone[39m
+
+ [32m✓[39m src/app/pwa.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 2[2mms[22m[39m
+ [32m✓[39m src/services/backup.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 49[2mms[22m[39m
+ [32m✓[39m src/app/offline.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 158[2mms[22m[39m
+[90mstderr[2m | src/app/screens/BackupScreen.test.tsx[2m > [22m[2mЭкран резервной копии (T19)[2m > [22m[2mэкспортирует гардероб одним файлом и сообщает итог
+[22m[39mNot implemented: navigation to another Document
+
+ [32m✓[39m src/app/screens/BackupScreen.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 237[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m4 passed[39m[22m[90m (4)[39m
+[2m      Tests [22m [1m[32m28 passed[39m[22m[90m (28)[39m
+[2m   Start at [22m 03:50:28
+[2m   Duration [22m 1.37s[2m (transform 382ms, setup 413ms, collect 1.10s, tests 447ms, environment 1.32s, prepare 240ms)[22m
+
+vitest exit=0

@@ -1,0 +1,26 @@
+# T19 — проверка SW/офлайн-оболочки через npm run build && npm run preview
+# Дата: 2026-10-14T00:51:20Z
+
+## dist/sw.js: прекеш и офлайн-фолбэк навигации
+createHandlerBoundToURL("/index.html")
+"/index.html"
+"index.html"
+"assets/index-B-e6hCyT.js"
+"assets/index-CW_YzbOZ.css"
+"assets/workbox-window.prod.es5-BBnX5xw4.js"
+
+## preview: GET / и SPA-маршрут /backup
+GET / -> HTTP 200, 955 bytes, title=<title>Гардероб</title>
+GET /add -> HTTP 200, 955 bytes, title=<title>Гардероб</title>
+GET /outfits -> HTTP 200, 955 bytes, title=<title>Гардероб</title>
+GET /backup -> HTTP 200, 955 bytes, title=<title>Гардероб</title>
+
+## preview: sw.js и манифест
+GET /sw.js -> HTTP 200, 1731 bytes
+GET /manifest.webmanifest -> HTTP 200
+
+## sw.js содержит createHandlerBoundToURL(/index.html):
+1
+
+# ЧЕСТНО: браузера в среде нет, реальный офлайн-прогон в Safari/Chrome не выполнен.
+# Доказательство офлайна здесь — прекеш оболочки + navigateFallback в собранном sw.js и ответ preview на глубокий маршрут.

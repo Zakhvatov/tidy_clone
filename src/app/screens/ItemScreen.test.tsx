@@ -284,6 +284,28 @@ describe('Карточка вещи (T15)', () => {
     expect(await screen.findByRole('button', { name: 'Перегенерировать' })).toBeInTheDocument()
   })
 
+  it('кнопка «Перегенерировать» вызывает принудительный режим force', async () => {
+    await items.create(makeItem({ id: 'вещь-1' }))
+    await images.addOriginal(
+      makeImage('о-1', 'вещь-1', 'оригинал', '2024-03-05T10:00:00.000Z', 'orig'),
+    )
+    await images.addAiVersion(
+      makeImage('а-старая', 'вещь-1', 'ai', '2024-03-06T10:00:00.000Z', 'ai-old'),
+    )
+    mockedDigitize.mockImplementation(async (idВещи: string) => {
+      await images.addAiVersion(
+        makeImage('а-новая', idВещи, 'ai', '2024-03-07T10:00:00.000Z', 'ai-new'),
+      )
+    })
+
+    renderItem('вещь-1')
+    fireEvent.click(await screen.findByRole('button', { name: 'Перегенерировать' }))
+
+    // Именно force: иначе сервис T10 вернул бы «уже есть» и запрос бы не ушёл.
+    await waitFor(() => expect(mockedDigitize).toHaveBeenCalledWith('вещь-1', { force: true }))
+    await waitFor(() => expect(screen.getByRole('img')).toHaveAttribute('src', 'blob:ai-new'))
+  })
+
   it('ошибка лимита (429) и авторизации (401) показывается человеческим текстом', async () => {
     await items.create(makeItem({ id: 'вещь-1' }))
     await images.addOriginal(

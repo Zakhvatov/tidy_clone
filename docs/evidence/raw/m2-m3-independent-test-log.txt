@@ -1,0 +1,46 @@
+### independent tester log (2026-10-14T00:40:41Z) HEAD=94c7857
+
+### npx tsc --noEmit
+exit=0
+
+### npm test (full, incl. independent)
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m23 passed[39m[22m[90m (24)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m231 passed[39m[22m[90m (233)[39m
+[2m   Start at [22m 03:40:43
+[2m   Duration [22m 4.87s[2m (transform 873ms, setup 2.91s, collect 4.06s, tests 8.14s, environment 10.88s, prepare 1.56s)[22m
+
+
+### npx vitest run (project only, exclude independent)
+[2m Test Files [22m [1m[32m23 passed[39m[22m[90m (23)[39m
+[2m      Tests [22m [1m[32m205 passed[39m[22m[90m (205)[39m
+[2m   Start at [22m 03:40:48
+[2m   Duration [22m 5.36s[2m (transform 1.23s, setup 3.53s, collect 6.00s, tests 7.17s, environment 12.57s, prepare 1.89s)[22m
+
+
+### npm run build
+[32m✓ built in 797ms[39m
+
+[36mPWA v1.3.0[39m
+mode      [35mgenerateSW[39m
+precache  [32m14 entries[39m [2m(396.91 KiB)[22m
+files generated
+  [2mdist/sw.js[22m
+  [2mdist/workbox-9c191d2f.js[22m
+
+### npm run lint
+
+> tidy-clone@0.1.0 lint
+> eslint .
+
+exit=0
+
+### workers/api npm test
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m64 passed[39m[22m[90m (64)[39m
+[2m   Start at [22m 03:41:00
+[2m   Duration [22m 330ms[2m (transform 61ms, setup 0ms, collect 66ms, tests 44ms, environment 0ms, prepare 40ms)[22m
+
+
+### workers/api npx tsc --noEmit
+exit=0

@@ -13,6 +13,8 @@ import * as items from '../../storage/items'
 import { ОшибкаХранилища } from '../../storage/errors'
 import { ErrorNotice } from '../../ui/ErrorNotice'
 import { ItemPreview } from '../../ui/ItemPreview'
+import { OfflineNotice } from '../../ui/OfflineNotice'
+import { useOnline } from '../../ui/useOnline'
 import screenStyles from './Screen.module.css'
 import styles from './AddScreen.module.css'
 
@@ -50,6 +52,7 @@ export function AddScreen() {
   const [фаза, setФаза] = useState<Phase>('idle')
   const [ошибка, setОшибка] = useState<string | null>(null)
   const retryRef = useRef<(() => void) | null>(null)
+  const online = useOnline()
 
   const busy = фаза === 'loading' || фаза === 'saving'
 
@@ -116,6 +119,8 @@ export function AddScreen() {
     <section className={screenStyles.screen}>
       <h1 className={screenStyles.title}>Добавить вещь</h1>
       <p className={styles.lead}>Вставьте ссылку с Wildberries или загрузите своё фото.</p>
+
+      {!online && <OfflineNotice />}
 
       <form
         className={styles.linkForm}

@@ -4,6 +4,7 @@ import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 import { manifest } from './src/app/manifest'
+import { workbox } from './src/app/pwa'
 
 export default defineConfig({
   plugins: [
@@ -15,15 +16,7 @@ export default defineConfig({
       injectRegister: null,
       includeAssets: ['apple-touch-icon.png', 'pwa-192x192.png', 'maskable-512x512.png'],
       manifest,
-      workbox: {
-        // Версионированный прекеш: устаревшие кэши вычищаются при обновлении.
-        cleanupOutdatedCaches: true,
-        clientsClaim: true,
-        skipWaiting: true,
-        globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'],
-        // Офлайн-заглушка навигации: любая навигация отдаёт precache-оболочку SPA.
-        navigateFallback: '/index.html',
-      },
+      workbox,
       devOptions: {
         enabled: false,
       },
