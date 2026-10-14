@@ -1,5 +1,5 @@
 # T15 — сырые проверки
-# дата: 2026-10-14T00:23:12Z
+# дата: 2026-10-14T00:24:43Z
 
 ## npx tsc --noEmit
 exit: 0
@@ -7,23 +7,42 @@ exit: 0
 ## npx eslint (файлы T15)
 exit: 0
 
-## npx vitest run src/app/screens/ItemScreen.test.tsx
+## npx vitest run src/app/screens/ItemScreen.test.tsx src/app/screens/digitizeBridge.test.ts
 exit: 0
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90m/Users/aleksandrzahvatov/orca/projects/tidy_clone[39m
 
- [32m✓[39m src/app/screens/ItemScreen.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 523[2mms[22m[39m
+ [32m✓[39m src/app/screens/digitizeBridge.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m src/app/screens/ItemScreen.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 498[2mms[22m[39m
 
-[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
-[2m      Tests [22m [1m[32m10 passed[39m[22m[90m (10)[39m
-[2m   Start at [22m 03:23:15
-[2m   Duration [22m 1.56s[2m (transform 276ms, setup 85ms, collect 429ms, tests 523ms, environment 268ms, prepare 43ms)[22m
+[2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[32m11 passed[39m[22m[90m (11)[39m
+[2m   Start at [22m 03:24:46
+[2m   Duration [22m 1.67s[2m (transform 307ms, setup 277ms, collect 540ms, tests 503ms, environment 923ms, prepare 93ms)[22m
 
 
 ## npm test (весь набор)
 exit: 0
-[2m Test Files [22m [1m[32m22 passed[39m[22m[90m (22)[39m
-[2m      Tests [22m [1m[32m204 passed[39m[22m[90m (204)[39m
-[2m   Start at [22m 03:23:17
-[2m   Duration [22m 4.70s[2m (transform 834ms, setup 3.10s, collect 3.82s, tests 6.27s, environment 11.94s, prepare 1.64s)[22m
+[2m Test Files [22m [1m[32m23 passed[39m[22m[90m (23)[39m
+[2m      Tests [22m [1m[32m205 passed[39m[22m[90m (205)[39m
+[2m   Start at [22m 03:24:48
+[2m   Duration [22m 4.67s[2m (transform 1.25s, setup 3.64s, collect 4.76s, tests 5.68s, environment 11.27s, prepare 1.54s)[22m
 
 
 ## npm run build
+exit: 0
+(!) /Users/aleksandrzahvatov/orca/projects/tidy_clone/src/services/digitize.ts is dynamically imported by /Users/aleksandrzahvatov/orca/projects/tidy_clone/src/app/screens/digitizeBridge.ts but also statically imported by /Users/aleksandrzahvatov/orca/projects/tidy_clone/src/services/digitize-queue.ts, dynamic import will not move module into another chunk.
+[39m
+computing gzip size...
+[2mdist/[22m[32mmanifest.webmanifest                        [39m[1m[2m  0.62 kB[22m[1m[22m
+[2mdist/[22m[32mindex.html                                  [39m[1m[2m  0.96 kB[22m[1m[22m[2m │ gzip:   0.46 kB[22m
+[2mdist/[22m[2massets/[22m[35mindex-7EN1zhP3.css                   [39m[1m[2m 16.65 kB[22m[1m[22m[2m │ gzip:   3.08 kB[22m
+[2mdist/[22m[2massets/[22m[36mworkbox-window.prod.es5-BBnX5xw4.js  [39m[1m[2m  5.75 kB[22m[1m[22m[2m │ gzip:   2.36 kB[22m
+[2mdist/[22m[2massets/[22m[36mindex-Bfv3pF6L.js                    [39m[1m[2m347.16 kB[22m[1m[22m[2m │ gzip: 109.30 kB[22m
+[32m✓ built in 828ms[39m
+
+[36mPWA v1.3.0[39m
+mode      [35mgenerateSW[39m
+precache  [32m14 entries[39m [2m(396.94 KiB)[22m
+files generated
+  [2mdist/sw.js[22m
+  [2mdist/workbox-9c191d2f.js[22m
