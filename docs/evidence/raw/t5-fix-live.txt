@@ -1,0 +1,47 @@
+# T5-fix — живая проверка подбора basket-лоадера
+Дата: 2026-10-14T08:26:17.635Z
+MAX_BASKET=65
+
+## Основные товары
+OK   nmId=1318303621  name="Брюки джоггеры широкие"  subject="Брюки"  запросов=27  мс=471  лоадеры=65,64,63,62,61,60,59,58,57,56,55,54,53,52,51,50,49,48,47,46,45,44,43,42,41,40
+OK   nmId=14058746  name="Платье "Ванесса""  subject="Платья"  запросов=2  мс=98  лоадеры=01
+OK   nmId=14058741  name="Платье/Офисное женское/женское/повседневное"  subject="Платья"  запросов=2  мс=48  лоадеры=01
+OK   nmId=16020837  name="Брошь Ягоды, подарок"  subject="Броши"  запросов=2  мс=91  лоадеры=02
+
+## Регресс 1318303621: по каким лоадерам шёл перебор (без кэша)
+name="Брюки джоггеры широкие"  мс=194
+  GET basket-65.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-64.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-63.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-62.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-61.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-60.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-59.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-58.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-57.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-56.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-55.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-54.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-53.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-52.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-51.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-50.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-49.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-48.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-47.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-46.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-45.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-44.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-43.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-42.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-41.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-40.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-39.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-38.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-37.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-36.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json
+  GET basket-45.wbbasket.ru/vol13183/part1318303/1318303621/info/sellers.json
+
+## Кэш найденного лоадера (vol=13183 → basket-45)
+первый вызов (без кэша): запросов=32  мс=168
+второй вызов (кэш): запросов=2  мс=48  name="Брюки джоггеры широкие"  url=https://basket-45.wbbasket.ru/vol13183/part1318303/1318303621/info/ru/card.json

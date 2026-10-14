@@ -1,7 +1,21 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { BASKET_RANGES, basketCandidates, basketForVol, buildCardUrl, loadWbCard } from './card'
+import {
+  BASKET_RANGES,
+  MAX_BASKET,
+  basketCandidates,
+  basketForVol,
+  buildCardUrl,
+  loadWbCard,
+  remainingBaskets,
+} from './card'
+import { clearBasketCache, readCachedBasket, writeCachedBasket } from './basket-cache'
 import { ОшибкаЗагрузкиКарточки } from './errors'
+
+// Кэш лоадера живёт в localStorage и переживает тесты — чистим перед каждым.
+beforeEach(() => {
+  clearBasketCache()
+})
 
 /** Минимальный ответ-заглушка вместо `Response`, чтобы не зависеть от undici. */
 function jsonResponse(body: unknown, status = 200): Response {
@@ -24,6 +38,14 @@ function makeFetch(routes: Record<string, unknown | number>): typeof fetch {
 }
 
 const BROOCH_URL = 'https://basket-02.wbbasket.ru/vol160/part16020/16020837'
+
+/** Ошибка `fetch`, которой Node сообщает NXDOMAIN (хост не существует). */
+function dnsError(): TypeError {
+  const cause = Object.assign(new Error('getaddrinfo ENOTFOUND basket-66.wbbasket.ru'), {
+    code: 'ENOTFOUND',
+  })
+  return new TypeError('fetch failed', { cause })
+}
 
 describe('basketForVol / basketCandidates', () => {
   it('находит лоадер по диапазону для подтверждённых вживую vol', () => {
@@ -49,8 +71,42 @@ describe('basketForVol / basketCandidates', () => {
     expect(candidates.length).toBeLessThanOrEqual(4)
   })
 
-  it('экстраполирует лоадер за пределами таблицы', () => {
+  it('экстраполирует лоадер за пределами таблицы, но не выше MAX_BASKET', () => {
     expect(basketForVol(100000)).toBeGreaterThan(BASKET_RANGES[BASKET_RANGES.length - 1].basket)
+    expect(basketForVol(100000)).toBeLessThanOrEqual(MAX_BASKET)
+  })
+
+  it('не выдаёт лоадеры вне 1..MAX_BASKET ни для каких vol', () => {
+    for (const vol of [0, 1, 140, 4565, 4566, 13183, 1_000_000, 2_000_000]) {
+      const predicted = basketForVol(vol)
+      expect(predicted).toBeGreaterThanOrEqual(1)
+      expect(predicted).toBeLessThanOrEqual(MAX_BASKET)
+      const candidates = basketCandidates(vol * 100000 + 1)
+      expect(candidates.length).toBeGreaterThan(0)
+      for (const candidate of candidates) {
+        expect(candidate).toBeGreaterThanOrEqual(1)
+        expect(candidate).toBeLessThanOrEqual(MAX_BASKET)
+      }
+    }
+  })
+
+  it('для реального vol=13183 расчёт даёт 65, хотя товар лежит на 45', () => {
+    expect(basketForVol(13183)).toBe(65)
+    expect(basketCandidates(1318303621)).toEqual([65, 64])
+  })
+
+  it('remainingBaskets перечисляет все существующие лоадеры без исключённых', () => {
+    const rest = remainingBaskets([65, 64], 65)
+    expect(rest).toHaveLength(MAX_BASKET - 2)
+    expect(rest).not.toContain(65)
+    expect(rest).not.toContain(64)
+    expect(new Set(rest).size).toBe(rest.length)
+    for (const basket of rest) {
+      expect(basket).toBeGreaterThanOrEqual(1)
+      expect(basket).toBeLessThanOrEqual(MAX_BASKET)
+    }
+    // Ближние к расчётному ищутся раньше — 45 попадёт в первую волну перебора.
+    expect(rest[0]).toBe(63)
   })
 })
 
@@ -184,10 +240,8 @@ describe('loadWbCard', () => {
     expect((error as Error).message).not.toContain('не найден')
   })
 
-  it('5xx — сетевой сбой: перебор прекращается, ошибка network', async () => {
-    const fetchImpl = makeFetch({
-      'https://basket-02.wbbasket.ru/vol160/part16020/16020837/info/ru/card.json': 503,
-    })
+  it('5xx на всех лоадерах — сетевой сбой: ошибка network', async () => {
+    const fetchImpl = (async () => jsonResponse({}, 503)) as unknown as typeof fetch
 
     const error = await loadWbCard(16020837, fetchImpl).catch((cause: unknown) => cause)
     expect(error).toMatchObject({ code: 'network' })
@@ -210,5 +264,138 @@ describe('loadWbCard', () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch
     await expect(loadWbCard(0, fetchImpl)).rejects.toThrow(ОшибкаЗагрузкиКарточки)
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('loadWbCard — перебор и сеть (T5-fix)', () => {
+  const FAR_FOUND = 'https://basket-45.wbbasket.ru/vol13183/part1318303/1318303621'
+  const FAR_CARD = {
+    nm_id: 1318303621,
+    imt_name: 'Брюки джоггеры широкие',
+    subj_name: 'Брюки',
+    media: { photo_count: 1 },
+  }
+
+  it('NXDOMAIN на одном кандидате не прерывает перебор (регресс)', async () => {
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (url.startsWith('https://basket-65.wbbasket.ru/vol13183/')) throw dnsError()
+      if (url.startsWith(FAR_FOUND)) return jsonResponse(FAR_CARD)
+      return jsonResponse({}, 404)
+    }) as typeof fetch
+
+    const result = await loadWbCard(1318303621, fetchImpl)
+    expect(result.name).toBe('Брюки джоггеры широкие')
+  })
+
+  it('находит товар на далёком лоадере 45 после 404 на расчётном 65', async () => {
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (url.startsWith(FAR_FOUND)) return jsonResponse(FAR_CARD)
+      return jsonResponse({}, 404)
+    }) as typeof fetch
+
+    const result = await loadWbCard(1318303621, fetchImpl)
+    expect(result.name).toBe('Брюки джоггеры широкие')
+    expect(result.subjectName).toBe('Брюки')
+    expect(result.photoUrls[0] ?? '').toContain('basket-45')
+  })
+
+  it('все таймауты/сетевые сбои — code network, а не «товар не найден»', async () => {
+    const fetchImpl = (async () => {
+      throw new DOMException('aborted', 'AbortError')
+    }) as unknown as typeof fetch
+
+    const error = await loadWbCard(1318303621, fetchImpl).catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(ОшибкаЗагрузкиКарточки)
+    expect(error).toMatchObject({ code: 'network' })
+    expect((error as Error).message).not.toContain('не найден')
+  })
+
+  it('не делает запросов к несуществующему лоадеру 66+', async () => {
+    const requested: string[] = []
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      requested.push(url)
+      return jsonResponse({}, 404)
+    }) as typeof fetch
+
+    await loadWbCard(1318303621, fetchImpl).catch(() => undefined)
+    expect(requested.some((url) => /basket-(66|67|68)/.test(url))).toBe(false)
+    expect(requested.every((url) => !/basket-(\d{3,})/.test(url))).toBe(true)
+  })
+
+  it('перебор идёт с параллелизмом не больше SWEEP-лимита', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const fetchImpl = (async () => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      inFlight -= 1
+      return jsonResponse({}, 404)
+    }) as typeof fetch
+
+    await loadWbCard(1318303621, fetchImpl).catch(() => undefined)
+    expect(maxInFlight).toBeGreaterThan(1)
+    expect(maxInFlight).toBeLessThanOrEqual(6)
+  })
+})
+
+describe('loadWbCard — кэш лоадера (T5-fix)', () => {
+  const FAR_FOUND = 'https://basket-45.wbbasket.ru/vol13183/part1318303/1318303621'
+
+  function countingFetch(): { fetchImpl: typeof fetch; calls: () => number } {
+    let count = 0
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      count += 1
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (url.startsWith(FAR_FOUND)) {
+        return jsonResponse({ nm_id: 1318303621, imt_name: 'Брюки джоггеры широкие' })
+      }
+      return jsonResponse({}, 404)
+    }) as typeof fetch
+    return { fetchImpl, calls: () => count }
+  }
+
+  it('запоминает найденный лоадер для vol', async () => {
+    const { fetchImpl } = countingFetch()
+    await loadWbCard(1318303621, fetchImpl)
+    expect(readCachedBasket(13183)).toBe(45)
+  })
+
+  it('второй вызов того же vol использует запомненный лоадер и тратит меньше запросов', async () => {
+    const { fetchImpl, calls } = countingFetch()
+    await loadWbCard(1318303621, fetchImpl)
+    const first = calls()
+
+    const second = countingFetch()
+    await loadWbCard(1318303621, second.fetchImpl)
+    expect(second.calls()).toBeLessThan(first)
+    expect(second.calls()).toBe(2) // card.json + sellers.json на кэшированном 45.
+  })
+
+  it('неверный кэш (404) не ломает загрузку — идёт обычный перебор', async () => {
+    writeCachedBasket(13183, 10)
+    const { fetchImpl } = countingFetch()
+
+    const result = await loadWbCard(1318303621, fetchImpl)
+    expect(result.name).toBe('Брюки джоггеры широкие')
+    expect(readCachedBasket(13183)).toBe(45)
+  })
+
+  it('кэш вне 1..MAX_BASKET игнорируется', async () => {
+    writeCachedBasket(13183, MAX_BASKET + 5)
+    const requested: string[] = []
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      requested.push(url)
+      if (url.startsWith(FAR_FOUND)) return jsonResponse({ nm_id: 1318303621, imt_name: 'ok' })
+      return jsonResponse({}, 404)
+    }) as typeof fetch
+
+    const result = await loadWbCard(1318303621, fetchImpl)
+    expect(result.name).toBe('ok')
+    expect(requested.some((url) => url.includes(`basket-${MAX_BASKET + 5}`))).toBe(false)
   })
 })

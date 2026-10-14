@@ -35,6 +35,7 @@ import {
 import { TidyApiError } from '../services/tidy-api'
 import { groupByTopCategory, loadWardrobe, preferredImage } from '../services/wardrobe'
 import { analyzeFrame, pickBestPhoto, type FrameData, type PackshotAnalysis } from '../services/wb/packshot'
+import { MAX_BASKET } from '../services/wb/card'
 import { closeDb, DB_NAME, DB_VERSION, getDb, upgrade, type WardrobeDB } from '../storage/db'
 import { ОшибкаВещьВОбразе, ОшибкаОригиналНеизменяем } from '../storage/errors'
 import * as images from '../storage/images'
@@ -376,13 +377,14 @@ describe('НЕЗАВИСИМО: негативные кейсы', () => {
     }
   })
 
-  it('несуществующий nmId: 404 на всех лоадерах → not_found, перебор ограничен 4', async () => {
+  it('несуществующий nmId: 404 на всех лоадерах → not_found, перебран весь диапазон 1..MAX_BASKET', async () => {
     let cardRequests = 0
     const fetchImpl = wbNet({ card: () => null, onCardRequest: () => (cardRequests += 1) })
     await expect(
       createDraftFromLink('https://www.wildberries.ru/catalog/99999999/detail.aspx', { fetchImpl }),
     ).rejects.toMatchObject({ code: 'not_found' })
-    expect(cardRequests).toBe(4)
+    // Честный перебор: все существующие лоадеры 01..MAX_BASKET (T5-fix).
+    expect(cardRequests).toBe(MAX_BASKET)
   })
 
   it('карточка без фото отклоняется понятной ошибкой', async () => {
