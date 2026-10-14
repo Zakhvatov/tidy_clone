@@ -1,0 +1,387 @@
+import { useEffect, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+
+import type { ImageRole, Изображение, ItemSource, Вещь } from '../../domain/types'
+import { ОшибкаВещьВОбразе } from '../../storage/errors'
+import { listByItem } from '../../storage/images'
+import { get as получитьВещь, remove as удалитьВещь, update as обновитьВещь } from '../../storage/items'
+import { CategoryPicker } from '../../ui/CategoryPicker'
+import { ErrorNotice } from '../../ui/ErrorNotice'
+import { useObjectUrl } from '../../ui/useObjectUrl'
+import { digitizeItem } from './digitizeBridge'
+import screenStyles from './Screen.module.css'
+import styles from './ItemScreen.module.css'
+
+type Состояние = 'загрузка' | 'готово' | 'нет' | 'ошибка'
+
+const ОШИБКА_ЧТЕНИЯ = 'Не удалось открыть вещь. Попробуйте ещё раз'
+
+/** Кнопки переключателя изображения: метки — из решений T15. */
+const МЕТКИ_РОЛЕЙ: Record<ImageRole, string> = {
+  оригинал: 'Оригинал',
+  ai: 'AI-версия',
+  вырез: 'Вырез',
+}
+
+/**
+ * Изображение указанной роли: оригинал — самый ранний (он неизменяем и обычно
+ * один), производные (AI-версия, вырез) — самые новые. Так перегенерация
+ * показывает свежий результат, а не первую попытку.
+ */
+function изображениеРоли(
+  изображения: readonly Изображение[],
+  роль: ImageRole,
+): Изображение | undefined {
+  const свои = изображения.filter((изображение) => изображение.роль === роль)
+  if (свои.length === 0) return undefined
+  const поВозрастанию = [...свои].sort((a, b) => a.датаСоздания.localeCompare(b.датаСоздания))
+  return роль === 'оригинал' ? поВозрастанию[0] : поВозрастанию[поВозрастанию.length - 1]
+}
+
+function меткаИсточника(источник: ItemSource): string {
+  return источник === 'ссылка' ? 'Ссылка' : 'Фото'
+}
+
+function форматДаты(iso: string): string {
+  const дата = new Date(iso)
+  if (Number.isNaN(дата.getTime())) return '—'
+  return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(
+    дата,
+  )
+}
+
+/** Код ошибки tidy-api, если он есть: по нему различаем 401 и 429. */
+function кодОшибки(error: unknown): string | undefined {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const code = (error as { code?: unknown }).code
+    if (typeof code === 'string') return code
+  }
+  return undefined
+}
+
+/**
+ * Понятный текст ошибки оцифровки. 401 и 429 у T10 имеют собственные коды —
+ * им даём человеческие формулировки; остальное показываем как есть, если это
+ * осмысленное сообщение сервиса.
+ */
+function текстОшибкиОцифровки(error: unknown): string {
+  const code = кодОшибки(error)
+  if (code === 'unauthorized') {
+    return 'Сервис оцифровки отклонил запрос (401). Проверьте доступ и попробуйте снова'
+  }
+  if (code === 'rate_limited') {
+    return 'Слишком много запросов на оцифровку (429). Подождите немного и повторите'
+  }
+  if (error instanceof Error && error.message.trim() !== '') return error.message
+  return 'Не удалось сделать AI-версию. Попробуйте ещё раз'
+}
+
+/** Текст ошибки удаления: вещь в образе называем по имени, если оно есть. */
+function текстОшибкиУдаления(error: unknown): string {
+  if (error instanceof ОшибкаВещьВОбразе) {
+    const образ = /входит в образ «([^»]+)»/.exec(error.message)?.[1]
+    if (образ !== undefined) {
+      return `Нельзя удалить: вещь входит в образ «${образ}». Сначала уберите её из образа`
+    }
+    return 'Нельзя удалить вещь: она входит в образ. Сначала уберите её из образа'
+  }
+  return 'Не удалось удалить вещь. Попробуйте ещё раз'
+}
+
+function СтрокаАтрибута({ label, value }: { label: string; value: string }) {
+  if (value.trim() === '') return null
+  return (
+    <div className={styles.attr}>
+      <dt className={styles.attrLabel}>{label}</dt>
+      <dd className={styles.attrValue}>{value}</dd>
+    </div>
+  )
+}
+
+/**
+ * Карточка вещи (T15): большое изображение с переключателем «Оригинал / AI-версия»,
+ * правка категории, перегенерация AI-версии и удаление.
+ *
+ * Пометка «AI-версия» живёт только здесь — в сетке её нет (решение T15).
+ * Переключатель показывается, только если есть что переключать: без AI-версии
+ * и без выреза остаётся один оригинал без кнопок.
+ *
+ * Генерация запускается **только нажатием** и идёт через `digitizeBridge` —
+ * единственную точку стыковки с сервисом оцифровки T10.
+ */
+export function ItemScreen() {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+
+  const [состояние, setСостояние] = useState<Состояние>('загрузка')
+  const [вещь, setВещь] = useState<Вещь | null>(null)
+  const [изображения, setИзображения] = useState<Изображение[]>([])
+  const [выбраннаяРоль, setВыбраннаяРоль] = useState<ImageRole>('оригинал')
+  const [ошибка, setОшибка] = useState<string | null>(null)
+  const [генерация, setГенерация] = useState(false)
+  const [подтверждениеУдаления, setПодтверждениеУдаления] = useState(false)
+  const [попытка, setПопытка] = useState(0)
+
+  useEffect(() => {
+    let активен = true
+    setСостояние('загрузка')
+    setОшибка(null)
+
+    if (id === undefined) {
+      setСостояние('нет')
+      return () => {
+        активен = false
+      }
+    }
+
+    void (async () => {
+      try {
+        const найденная = await получитьВещь(id)
+        if (!активен) return
+        if (найденная === undefined) {
+          setВещь(null)
+          setСостояние('нет')
+          return
+        }
+        const картинки = await listByItem(id)
+        if (!активен) return
+        setВещь(найденная)
+        setИзображения(картинки)
+        // По решению «Какое изображение где» показываем AI-версию, если она есть.
+        setВыбраннаяРоль(изображениеРоли(картинки, 'ai') === undefined ? 'оригинал' : 'ai')
+        setСостояние('готово')
+      } catch {
+        if (!активен) return
+        setОшибка(ОШИБКА_ЧТЕНИЯ)
+        setСостояние('ошибка')
+      }
+    })()
+
+    return () => {
+      активен = false
+    }
+  }, [id, попытка])
+
+  const оригинал = изображениеРоли(изображения, 'оригинал')
+  const ai = изображениеРоли(изображения, 'ai')
+  const вырез = изображениеРоли(изображения, 'вырез')
+  const выбранное =
+    выбраннаяРоль === 'ai' ? ai : выбраннаяРоль === 'вырез' ? вырез : оригинал
+  const url = useObjectUrl(выбранное?.blob)
+
+  const опции: ImageRole[] = ['оригинал']
+  if (ai !== undefined) опции.push('ai')
+  if (вырез !== undefined) опции.push('вырез')
+
+  async function сохранитьКатегорию(категория: string, подкатегория: string) {
+    if (вещь === null) return
+    setОшибка(null)
+    try {
+      const обновлённая = await обновитьВещь(вещь.id, { категория, подкатегория })
+      setВещь(обновлённая)
+    } catch {
+      setОшибка('Не удалось сохранить категорию. Попробуйте ещё раз')
+    }
+  }
+
+  async function сделатьAiВерсию() {
+    if (вещь === null) return
+    setОшибка(null)
+    setГенерация(true)
+    try {
+      await digitizeItem(вещь.id)
+      const картинки = await listByItem(вещь.id)
+      setИзображения(картинки)
+      setВыбраннаяРоль('ai')
+    } catch (error) {
+      setОшибка(текстОшибкиОцифровки(error))
+    } finally {
+      setГенерация(false)
+    }
+  }
+
+  async function удалитьВещьОкончательно() {
+    if (вещь === null) return
+    setОшибка(null)
+    try {
+      await удалитьВещь(вещь.id)
+      navigate('/')
+    } catch (error) {
+      setОшибка(текстОшибкиУдаления(error))
+      setПодтверждениеУдаления(false)
+    }
+  }
+
+  if (состояние === 'загрузка') {
+    return (
+      <section className={screenStyles.screen}>
+        <p className={styles.status} role="status" aria-live="polite">
+          Загружаем вещь…
+        </p>
+      </section>
+    )
+  }
+
+  if (состояние === 'ошибка') {
+    return (
+      <section className={screenStyles.screen}>
+        <ErrorNotice
+          message={ошибка ?? ОШИБКА_ЧТЕНИЯ}
+          onRetry={() => setПопытка((текущая) => текущая + 1)}
+        />
+      </section>
+    )
+  }
+
+  if (состояние === 'нет' || вещь === null) {
+    return (
+      <section className={screenStyles.screen}>
+        <div className={styles.notFound}>
+          <h1 className={styles.name}>Вещь не найдена</h1>
+          <p className={styles.confirmText}>Возможно, её удалили. Вернитесь в гардероб.</p>
+          <button className={styles.back} type="button" onClick={() => navigate('/')}>
+            Назад
+          </button>
+        </div>
+      </section>
+    )
+  }
+
+  const название = вещь.название.trim() === '' ? 'Без названия' : вещь.название.trim()
+
+  return (
+    <section className={screenStyles.screen}>
+      <header className={styles.header}>
+        <button className={styles.back} type="button" onClick={() => navigate('/')}>
+          ← Назад
+        </button>
+      </header>
+
+      <article className={styles.card}>
+        <div className={styles.imageBlock}>
+          <div className={styles.imageFrame}>
+            {url !== '' && <img className={styles.image} src={url} alt={название} />}
+          </div>
+
+          {выбраннаяРоль === 'ai' && (
+            <p className={styles.aiBadge} role="note">
+              AI-версия
+            </p>
+          )}
+
+          {опции.length > 1 && (
+            <div className={styles.switcher} role="group" aria-label="Изображение">
+              {опции.map((роль) => (
+                <button
+                  key={роль}
+                  type="button"
+                  aria-pressed={выбраннаяРоль === роль}
+                  className={
+                    выбраннаяРоль === роль
+                      ? `${styles.switchOption} ${styles.switchOptionActive}`
+                      : styles.switchOption
+                  }
+                  onClick={() => setВыбраннаяРоль(роль)}
+                >
+                  {МЕТКИ_РОЛЕЙ[роль]}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <h1 className={styles.name}>{название}</h1>
+
+        <dl className={styles.attrs}>
+          <СтрокаАтрибута label="Цвета" value={вещь.цвета.join(', ')} />
+          <СтрокаАтрибута label="Состав" value={вещь.состав.join(', ')} />
+          <СтрокаАтрибута label="Бренд" value={вещь.бренд} />
+          <СтрокаАтрибута label="Источник" value={меткаИсточника(вещь.источник)} />
+          <div className={styles.attr}>
+            <dt className={styles.attrLabel}>Добавлено</dt>
+            <dd className={styles.attrValue}>
+              <time dateTime={вещь.датаСоздания}>{форматДаты(вещь.датаСоздания)}</time>
+            </dd>
+          </div>
+        </dl>
+
+        {ошибка !== null && (
+          <ErrorNotice
+            message={ошибка}
+            onRetry={
+              ошибка === ОШИБКА_ЧТЕНИЯ ? () => setПопытка((текущая) => текущая + 1) : undefined
+            }
+          />
+        )}
+
+        <section className={styles.section} aria-label="Категория">
+          <h2 className={styles.sectionTitle}>Категория</h2>
+          <CategoryPicker
+            категория={вещь.категория}
+            подкатегория={вещь.подкатегория}
+            needsReview={false}
+            onChange={(категория, подкатегория) => {
+              void сохранитьКатегорию(категория, подкатегория)
+            }}
+          />
+        </section>
+
+        <section className={styles.section} aria-label="AI-версия">
+          <h2 className={styles.sectionTitle}>AI-версия</h2>
+          <button
+            className={styles.generate}
+            type="button"
+            disabled={генерация}
+            onClick={() => {
+              void сделатьAiВерсию()
+            }}
+          >
+            {генерация
+              ? 'Готовим AI-версию…'
+              : ai === undefined
+                ? 'Сделать AI-версию'
+                : 'Перегенерировать'}
+          </button>
+        </section>
+
+        <section className={styles.section} aria-label="Удаление">
+          <h2 className={styles.sectionTitle}>Удаление</h2>
+          {!подтверждениеУдаления && (
+            <button
+              className={styles.danger}
+              type="button"
+              onClick={() => setПодтверждениеУдаления(true)}
+            >
+              Удалить вещь
+            </button>
+          )}
+          {подтверждениеУдаления && (
+            <div className={styles.confirm} role="alertdialog" aria-label="Подтверждение удаления">
+              <p className={styles.confirmText}>
+                Удалить вещь безвозвратно? Оригинал и AI-версия тоже будут удалены.
+              </p>
+              <div className={styles.confirmActions}>
+                <button
+                  className={styles.confirmDelete}
+                  type="button"
+                  onClick={() => {
+                    void удалитьВещьОкончательно()
+                  }}
+                >
+                  Удалить
+                </button>
+                <button
+                  className={styles.confirmCancel}
+                  type="button"
+                  onClick={() => setПодтверждениеУдаления(false)}
+                >
+                  Отмена
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      </article>
+    </section>
+  )
+}

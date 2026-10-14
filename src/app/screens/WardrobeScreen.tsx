@@ -8,6 +8,7 @@ import {
   type WardrobeSection,
 } from '../../services/wardrobe'
 import { ErrorNotice } from '../../ui/ErrorNotice'
+import { DigitizePanel } from '../../ui/DigitizePanel'
 import { ItemImage } from '../../ui/ItemImage'
 import screenStyles from './Screen.module.css'
 import styles from './WardrobeScreen.module.css'
@@ -74,6 +75,8 @@ export function WardrobeScreen() {
   return (
     <section className={screenStyles.screen}>
       <h1 className={screenStyles.title}>Гардероб</h1>
+
+      {состояние === 'готово' && секции.length > 0 && <DigitizePanel />}
 
       {состояние === 'загрузка' && <WardrobeSkeleton />}
 

@@ -1,0 +1,49 @@
+# T10-T12 · npm test
+# 2026-10-14T00:18:00Z
+
+
+> tidy-clone@0.1.0 test
+> vitest run
+
+
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90m/Users/aleksandrzahvatov/orca/projects/tidy_clone[39m
+
+ [32m✓[39m src/services/digitize.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 80[2mms[22m[39m
+ [32m✓[39m src/ui/DigitizePanel.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 324[2mms[22m[39m
+ [32m✓[39m src/app/sw.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 336[2mms[22m[39m
+   [33m[2m✓[22m[39m Регистрация service worker[2m > [22mрегистрирует SW и не ломает рендер приложения [33m 334[2mms[22m[39m
+ [32m✓[39m src/app/routing.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 525[2mms[22m[39m
+ [32m✓[39m src/storage/storage.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 31[2mms[22m[39m
+[90mstdout[2m | src/services/wardrobe.test.ts[2m > [22m[2mЧтение гардероба (T13)[2m > [22m[2m50 вещей: чтение и группировка укладываются в порог
+[22m[39m[T13 perf] loadWardrobe: 1.8 мс, группировка: 0.1 мс, вещей: 50
+
+ [32m✓[39m src/services/wardrobe.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 247[2mms[22m[39m
+ [32m✓[39m src/ui/ItemImage.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 61[2mms[22m[39m
+ [32m✓[39m src/app/screens/WardrobeScreen.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 1932[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран гардероба (T13)[2m > [22mпустой гардероб: пустое состояние и кнопка «Добавить вещь» ведёт на /add [33m 457[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран гардероба (T13)[2m > [22m50 вещей: 8+1 секция, счётчики и порядок секций по ADR-0004 [33m 1180[2mms[22m[39m
+ [32m✓[39m src/services/digitize-queue.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 257[2mms[22m[39m
+ [32m✓[39m src/app/screens/AddScreen.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1955[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран добавления вещи (T8)[2m > [22mсохраняет вещь по ссылке с Оригиналом и категорией из словаря [33m 694[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран добавления вещи (T8)[2m > [22mповторное добавление не ломает уже сохранённые вещи [33m 337[2mms[22m[39m
+ [32m✓[39m src/app/screens/ItemScreen.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 2025[2mms[22m[39m
+   [33m[2m✓[22m[39m Карточка вещи (T15)[2m > [22mпо id показывает данные вещи: название, атрибуты, источник и категорию [33m 464[2mms[22m[39m
+   [33m[2m✓[22m[39m Карточка вещи (T15)[2m > [22mпри наличии AI-версии переключатель меняет изображение, пометка «AI-версия» видна [33m 340[2mms[22m[39m
+   [33m[2m✓[22m[39m Карточка вещи (T15)[2m > [22mвещь из образа не удаляется: понятная ошибка, вещь на месте [33m 332[2mms[22m[39m
+ [32m✓[39m src/services/classify-photo.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 100[2mms[22m[39m
+ [32m✓[39m src/domain/wb-taxonomy.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 41[2mms[22m[39m
+ [32m✓[39m src/domain/prompt-templates.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m src/services/tidy-api.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 39[2mms[22m[39m
+ [32m✓[39m src/services/wb/packshot.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 37[2mms[22m[39m
+ [32m✓[39m src/services/cutout.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 31[2mms[22m[39m
+ [32m✓[39m src/services/wb/parse-link.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m src/app/manifest.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m src/services/wb/card.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m src/services/import-item.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m src/domain/taxonomy.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m22 passed[39m[22m[90m (22)[39m
+[2m      Tests [22m [1m[32m203 passed[39m[22m[90m (203)[39m
+[2m   Start at [22m 03:18:00
+[2m   Duration [22m 5.84s[2m (transform 1.08s, setup 3.57s, collect 5.49s, tests 8.08s, environment 14.83s, prepare 2.30s)[22m
+

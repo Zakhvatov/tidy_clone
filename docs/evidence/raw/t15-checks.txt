@@ -1,0 +1,29 @@
+# T15 — сырые проверки
+# дата: 2026-10-14T00:23:12Z
+
+## npx tsc --noEmit
+exit: 0
+
+## npx eslint (файлы T15)
+exit: 0
+
+## npx vitest run src/app/screens/ItemScreen.test.tsx
+exit: 0
+
+ [32m✓[39m src/app/screens/ItemScreen.test.tsx [2m([22m[2m10 tests[22m[2m)[22m[33m 523[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m10 passed[39m[22m[90m (10)[39m
+[2m   Start at [22m 03:23:15
+[2m   Duration [22m 1.56s[2m (transform 276ms, setup 85ms, collect 429ms, tests 523ms, environment 268ms, prepare 43ms)[22m
+
+
+## npm test (весь набор)
+exit: 0
+[2m Test Files [22m [1m[32m22 passed[39m[22m[90m (22)[39m
+[2m      Tests [22m [1m[32m204 passed[39m[22m[90m (204)[39m
+[2m   Start at [22m 03:23:17
+[2m   Duration [22m 4.70s[2m (transform 834ms, setup 3.10s, collect 3.82s, tests 6.27s, environment 11.94s, prepare 1.64s)[22m
+
+
+## npm run build

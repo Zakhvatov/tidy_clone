@@ -5,14 +5,15 @@ import {
 } from 'idb'
 
 import type { Изображение, Образ, Вещь } from '../domain/types'
+import type { СостояниеОчереди } from './queue'
 
 /** Имя базы на устройстве. */
 export const DB_NAME = 'wardrobe'
 
 /** Текущая версия схемы. Версия увеличивается вместе с новой веткой миграции. */
-export const DB_VERSION = 1
+export const DB_VERSION = 2
 
-/** Схема базы: сторы `items`, `images`, `outfits` и их индексы. */
+/** Схема базы: сторы `items`, `images`, `outfits`, `queue` и их индексы. */
 export interface WardrobeDB extends DBSchema {
   items: {
     key: string
@@ -37,6 +38,14 @@ export interface WardrobeDB extends DBSchema {
       byДатаСоздания: string
     }
   }
+  /**
+   * Персистентное состояние очереди оцифровки (T12). Добавлен в версии 2;
+   * на версии 1 стора не было, данные `items`/`images`/`outfits` не меняются.
+   */
+  queue: {
+    key: string
+    value: СостояниеОчереди
+  }
 }
 
 /** Схема версии 1. Вынесена, чтобы `upgrade` читался как список шагов. */
@@ -51,6 +60,15 @@ function createSchemaV1(db: IDBPDatabase<WardrobeDB>): void {
   const outfits = db.createObjectStore('outfits', { keyPath: 'id' })
   outfits.createIndex('byСезон', 'сезон')
   outfits.createIndex('byДатаСоздания', 'датаСоздания')
+}
+
+/**
+ * Схема версии 2: добавляется стор `queue` (очередь оцифровки, T12).
+ * Существующие сторы не пересоздаются — миграция только дополняет схему.
+ */
+function createSchemaV2(db: IDBPDatabase<WardrobeDB>): void {
+  if (db.objectStoreNames.contains('queue')) return
+  db.createObjectStore('queue', { keyPath: 'id' })
 }
 
 /**
@@ -70,6 +88,9 @@ export function upgrade(
     switch (version) {
       case 0:
         createSchemaV1(db)
+        break
+      case 1:
+        createSchemaV2(db)
         break
       default:
         // Шага для этой версии ещё нет — значит, миграции не требуется.

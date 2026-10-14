@@ -24,9 +24,23 @@ import {
   isKnownTop,
   type TopCategory,
 } from '../domain/taxonomy'
+import {
+  CLASSIFY_PATH,
+  DEFAULT_TIMEOUT_MS,
+  TidyApiError,
+  requestJson,
+} from './tidy-api'
 
-/** Базовый URL воркера по умолчанию. Переопределяется `VITE_TIDY_API_URL`. */
-export const DEFAULT_API_URL = 'https://tidy-api.megabaff2011.workers.dev'
+/**
+ * Сетевые детали воркера (базовый URL, заголовок `x-tidy-client`, таймаут,
+ * разбор `{error:{code,message}}`) живут в `tidy-api.ts` — здесь остаётся только
+ * подготовка изображения и проверка ответа по таксономии. Экспорты ниже
+ * сохранены ради обратной совместимости с вызывающим кодом и тестами.
+ */
+export { DEFAULT_API_URL, apiBaseUrl, clientTokenFromEnv } from './tidy-api'
+/** Ошибка распознавания — тот же класс, что и у клиента воркера (T10). */
+export { TidyApiError as ClassifyError } from './tidy-api'
+export type { TidyApiErrorCode as ClassifyErrorCode } from './tidy-api'
 
 /**
  * Лимит воркера на тело запроса — 4 МБ (`MAX_CLASSIFY_BODY_BYTES`). Считаем в
@@ -39,40 +53,11 @@ export const MAX_BODY_BYTES = 4 * 1024 * 1024
 /** Длинная сторона, до которой сжимаем фото перед отправкой (как у vision-провайдера). */
 export const MAX_IMAGE_SIDE = 2000
 
-const DEFAULT_TIMEOUT_MS = 30_000
-
 /** Запас на `{"imageBase64":"...","mimeType":"image/jpeg"}` вокруг строки. */
 const JSON_OVERHEAD_BYTES = 128
 
 /** MIME, которые принимает воркер. */
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'])
-
-/** Коды ошибок клиента. `not_configured` приходит от воркера (нет секрета). */
-export type ClassifyErrorCode =
-  | 'not_configured'
-  | 'unauthorized'
-  | 'rate_limited'
-  | 'image_too_large'
-  | 'unsupported_media'
-  | 'bad_request'
-  | 'network'
-  | 'timeout'
-  | 'aborted'
-  | 'server'
-  | 'invalid_response'
-
-/** Понятная ошибка распознавания: UI показывает `message`, логика смотрит на `code`. */
-export class ClassifyError extends Error {
-  readonly code: ClassifyErrorCode
-  readonly status?: number
-
-  constructor(code: ClassifyErrorCode, message: string, options: { status?: number; cause?: unknown } = {}) {
-    super(message, options.cause === undefined ? undefined : { cause: options.cause })
-    this.name = 'ClassifyError'
-    this.code = code
-    this.status = options.status
-  }
-}
 
 /** Результат классификации фото — та же форма, что и у словаря WB. */
 export interface PhotoClassification {
@@ -101,28 +86,6 @@ export interface ClassifyPhotoOptions {
    * `null` или пустая строка — запрос без заголовка `x-tidy-client` (воркер ответит 401).
    */
   clientToken?: string | null
-}
-
-// ---------------------------------------------------------------------------
-// Конфигурация
-// ---------------------------------------------------------------------------
-
-/** Базовый URL воркера без завершающего слэша. */
-export function apiBaseUrl(explicit?: string): string {
-  const fromEnv = import.meta.env?.VITE_TIDY_API_URL
-  const value = explicit ?? fromEnv ?? DEFAULT_API_URL
-  return value.trim().replace(/\/+$/, '')
-}
-
-/**
- * Клиентский токен воркера. Если `VITE_TIDY_CLIENT_TOKEN` не задан, возвращается `null`
- * и запрос уйдёт без заголовка — это явно «не настроено», а не тихий обход защиты
- * (воркер ответит 401 `unauthorized`).
- */
-export function clientTokenFromEnv(explicit?: string | null): string | null {
-  const value = explicit === undefined ? import.meta.env?.VITE_TIDY_CLIENT_TOKEN : explicit
-  const trimmed = value?.trim()
-  return trimmed ? trimmed : null
 }
 
 // ---------------------------------------------------------------------------
@@ -269,53 +232,6 @@ export function normalizeClassification(payload: unknown): PhotoClassification {
 // Клиент
 // ---------------------------------------------------------------------------
 
-async function errorFromResponse(response: Response): Promise<ClassifyError> {
-  let code = ''
-  let message = ''
-  try {
-    const body: unknown = await response.json()
-    if (isRecord(body) && isRecord(body.error)) {
-      if (typeof body.error.code === 'string') code = body.error.code
-      if (typeof body.error.message === 'string') message = body.error.message
-    }
-  } catch {
-    // тело не JSON — остаётся только HTTP-статус
-  }
-
-  if (response.status === 503 && code === 'not_configured') {
-    return new ClassifyError(
-      'not_configured',
-      message || 'Распознавание недоступно: сервис не настроен',
-      { status: response.status },
-    )
-  }
-  if (response.status === 401 || code === 'unauthorized') {
-    return new ClassifyError('unauthorized', message || 'Распознавание недоступно: неверный клиентский токен', {
-      status: response.status,
-    })
-  }
-  if (response.status === 429 || code === 'rate_limited') {
-    return new ClassifyError(
-      'rate_limited',
-      message || 'Слишком много запросов на распознавание. Подождите минуту и попробуйте снова.',
-      { status: response.status },
-    )
-  }
-  if (response.status === 413 || code === 'payload_too_large') {
-    return new ClassifyError('image_too_large', message || 'Фото слишком большое для распознавания', {
-      status: response.status,
-    })
-  }
-  if (response.status >= 400 && response.status < 500) {
-    return new ClassifyError('bad_request', message || `Некорректный запрос к сервису (${response.status})`, {
-      status: response.status,
-    })
-  }
-  return new ClassifyError('server', message || `Сервис распознавания вернул ошибку (${response.status})`, {
-    status: response.status,
-  })
-}
-
 /**
  * Отправляет фото в воркер и возвращает категорию из нашей таксономии.
  *
@@ -335,18 +251,18 @@ export async function classifyPhoto(
   const fetchImpl = options.fetchImpl ?? fetch
 
   if (options.signal?.aborted) {
-    throw new ClassifyError('aborted', 'Распознавание отменено')
+    throw new TidyApiError('aborted', 'Распознавание отменено')
   }
 
   let prepared = blob
   if (estimateBodyBytes(prepared.size) > maxBodyBytes) {
     if (!resize) {
-      throw new ClassifyError('image_too_large', 'Фото слишком большое для распознавания')
+      throw new TidyApiError('image_too_large', 'Фото слишком большое для распознавания')
     }
     try {
       prepared = await resize(blob, MAX_IMAGE_SIDE)
     } catch (cause) {
-      throw new ClassifyError(
+      throw new TidyApiError(
         'image_too_large',
         'Фото слишком большое, а сжать его не удалось. Попробуйте другое изображение.',
         { cause },
@@ -354,7 +270,7 @@ export async function classifyPhoto(
     }
   }
   if (estimateBodyBytes(prepared.size) > maxBodyBytes) {
-    throw new ClassifyError(
+    throw new TidyApiError(
       'image_too_large',
       'Даже после сжатия фото больше лимита распознавания. Попробуйте другое изображение.',
     )
@@ -362,58 +278,24 @@ export async function classifyPhoto(
 
   const mimeType = mimeTypeOf(prepared)
   if (!ALLOWED_MIME.has(mimeType)) {
-    throw new ClassifyError('unsupported_media', `Формат ${mimeType} не поддерживается распознаванием`)
+    throw new TidyApiError('unsupported_media', `Формат ${mimeType} не поддерживается распознаванием`)
   }
 
   const imageBase64 = await blobToBase64(prepared)
   const body = JSON.stringify({ imageBase64, mimeType })
   if (body.length > maxBodyBytes) {
-    throw new ClassifyError('image_too_large', 'Фото слишком большое для распознавания')
+    throw new TidyApiError('image_too_large', 'Фото слишком большое для распознавания')
   }
 
-  const controller = new AbortController()
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    controller.abort()
-  }, timeoutMs)
-  const forwardAbort = () => controller.abort()
-  options.signal?.addEventListener('abort', forwardAbort, { once: true })
-  // Сигнал мог сработать, пока читали и кодировали файл: повторного события не будет.
-  if (options.signal?.aborted) controller.abort()
-
-  const clientToken = clientTokenFromEnv(options.clientToken)
-  const headers: Record<string, string> = { 'content-type': 'application/json' }
-  if (clientToken !== null) headers['x-tidy-client'] = clientToken
-
-  let response: Response
-  try {
-    response = await fetchImpl(`${apiBaseUrl(options.baseUrl)}/classify`, {
-      method: 'POST',
-      headers,
-      body,
-      signal: controller.signal,
-    })
-  } catch (cause) {
-    if (options.signal?.aborted) {
-      throw new ClassifyError('aborted', 'Распознавание отменено', { cause })
-    }
-    if (timedOut) {
-      throw new ClassifyError('timeout', 'Сервис распознавания не ответил вовремя', { cause })
-    }
-    throw new ClassifyError('network', 'Не удалось связаться с сервисом распознавания', { cause })
-  } finally {
-    clearTimeout(timer)
-    options.signal?.removeEventListener('abort', forwardAbort)
-  }
-
-  if (!response.ok) throw await errorFromResponse(response)
-
-  let payload: unknown
-  try {
-    payload = await response.json()
-  } catch (cause) {
-    throw new ClassifyError('invalid_response', 'Сервис распознавания вернул некорректный ответ', { cause })
-  }
+  const payload = await requestJson<unknown>(CLASSIFY_PATH, {
+    fetchImpl,
+    baseUrl: options.baseUrl,
+    signal: options.signal,
+    timeoutMs,
+    clientToken: options.clientToken,
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body,
+  })
   return normalizeClassification(payload)
 }

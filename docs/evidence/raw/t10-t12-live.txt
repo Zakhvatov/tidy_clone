@@ -1,0 +1,20 @@
+# T10-T12 · живой прогон воркера tidy-api
+# 2026-10-14T00:18:31Z
+# URL: https://tidy-api.megabaff2011.workers.dev   (токен x-tidy-client: скрыт)
+
+## GET /health
+{"ok":true,"ai":true}
+
+## POST /generate без заголовка x-tidy-client
+{"error":{"code":"unauthorized","message":"Неверный или отсутствующий клиентский токен"}}
+status=401 type=application/json; charset=utf-8
+
+## POST /generate с x-tidy-client
+# prompt: sneakers, complete pair of shoes, both shoes fully visible in frame, ...
+status=502 type=application/json; charset=utf-8 size=104 time=0.096586
+body: {"error":{"code":"model_error","message":"Модель генерации вернула ошибку"}}
+
+# Вывод: 401 без токена — клиент маппит в код unauthorized; 502 model_error —
+# upstream Workers AI сейчас не отдаёт картинку (то же в docs/evidence/raw/t11-live.txt).
+# Клиент разбирает тело {error:{code,message}} и отдаёт код server; очередь ретраит
+# до 3 раз и продолжает остальные вещи — это проверено на моке воркера.

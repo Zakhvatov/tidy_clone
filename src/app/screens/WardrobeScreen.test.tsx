@@ -130,7 +130,20 @@ describe('Экран гардероба (T13)', () => {
       expect(within(region).getAllByRole('button')).toHaveLength(counts[index])
     })
 
-    expect(screen.getAllByRole('button')).toHaveLength(50)
+    const кнопкиСетки = regions.flatMap((region) => within(region).getAllByRole('button'))
+    expect(кнопкиСетки).toHaveLength(50)
+  })
+
+  it('на непустом гардеробе есть панель массовой оцифровки', async () => {
+    await items.create(
+      makeItem({ id: 'вещь-1', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
+    )
+    renderWardrobe()
+
+    expect(await screen.findByRole('region', { name: 'Второй слой' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Оцифровать всё, где нет пакшота' }),
+    ).toBeInTheDocument()
   })
 
   it('вещь с AI-версией показывает AI, без неё — Оригинал (подставлен нужный blob)', async () => {

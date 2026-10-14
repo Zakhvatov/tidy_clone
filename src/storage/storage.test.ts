@@ -1,14 +1,15 @@
 import 'fake-indexeddb/auto'
 
-import { deleteDB, openDB, type IDBPDatabase } from 'idb'
+import { deleteDB, openDB } from 'idb'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
 import type { ImageRole, Изображение, Образ, Season, Вещь } from '../domain/types'
-import { DB_NAME, DB_VERSION, closeDb, upgrade, type WardrobeDB } from './db'
+import { DB_NAME, DB_VERSION, closeDb, getDb, upgrade, type WardrobeDB } from './db'
 import { ОшибкаВещьВОбразе, ОшибкаОригиналНеизменяем } from './errors'
 import * as images from './images'
 import * as items from './items'
 import * as outfits from './outfits'
+import { clearQueue, loadQueue, saveQueue, type СостояниеОчереди } from './queue'
 
 function makeItem(overrides: Partial<Вещь> = {}): Вещь {
   const now = new Date().toISOString()
@@ -68,9 +69,28 @@ function makeOutfit(
   }
 }
 
-/** Схема теста версии 2: к домену добавляется служебный стор `meta`. */
-interface TestWardrobeDB extends WardrobeDB {
-  meta: { key: string; value: { ключ: string } }
+/** Состояние очереди оцифровки для тестов репозитория. */
+function makeQueueState(overrides: Partial<СостояниеОчереди> = {}): СостояниеОчереди {
+  const now = new Date().toISOString()
+  return {
+    id: 'active',
+    статус: 'остановлена',
+    задачи: [
+      {
+        id: 'вещь-1',
+        idВещи: 'вещь-1',
+        название: 'Худи тестовое',
+        способ: null,
+        статус: 'ожидает',
+        попытки: 0,
+        датаСоздания: now,
+        датаОбновления: now,
+      },
+    ],
+    датаНачала: now,
+    датаОбновления: now,
+    ...overrides,
+  }
 }
 
 describe('Хранилище гардероба', () => {
@@ -141,29 +161,44 @@ describe('Хранилище гардероба', () => {
     expect(await items.get('вещь-1')).toBeDefined()
   })
 
-  it('переживает миграцию схемы на версию 2 без потери данных', async () => {
-    await items.create(makeItem({ id: 'вещь-1', название: 'До миграции' }))
+  it('миграция v1→v2 на реальном upgrade() сохраняет вещи и добавляет стор queue', async () => {
+    // Готовим базу версии 1 вручную: проверяется именно рабочий `upgrade()` из
+    // `db.ts`, а не тестовая ветка с дополнительным стором.
+    const db1 = await openDB<WardrobeDB>(DB_NAME, 1, { upgrade })
+    await db1.add('items', makeItem({ id: 'вещь-v1', название: 'До миграции' }))
+    await db1.add(
+      'images',
+      makeImage('изобр-v1', 'вещь-v1', 'оригинал', '2024-01-01T00:00:00.000Z'),
+    )
+    expect(db1.objectStoreNames.contains('queue')).toBe(false)
+    db1.close()
+
+    // `getDb()` открывает базу уже на DB_VERSION (2) и вызывает рабочий upgrade.
+    const db2 = await getDb()
+    expect(db2.version).toBe(DB_VERSION)
+    expect(db2.objectStoreNames.contains('queue')).toBe(true)
+
+    // Данные версии 1 не потерялись.
+    const вещь = await db2.get('items', 'вещь-v1')
+    expect(вещь?.название).toBe('До миграции')
+    expect(await db2.get('images', 'изобр-v1')).toBeDefined()
+  })
+
+  it('сохраняет и читает состояние очереди, переживая закрытие БД', async () => {
+    await saveQueue(makeQueueState({ последняяОшибка: 'Сеть недоступна' }))
+
     await closeDb()
 
-    // Ветка версии 2 живёт в тесте: в рабочем коде она появится такой же одной
-    // ветвью внутри `switch` в upgrade(), а прошлые шаги не изменятся.
-    const db2 = await openDB<TestWardrobeDB>(DB_NAME, 2, {
-      upgrade(database, oldVersion, newVersion) {
-        upgrade(
-          database as unknown as IDBPDatabase<WardrobeDB>,
-          oldVersion,
-          Math.min(newVersion ?? DB_VERSION, DB_VERSION),
-        )
-        if (oldVersion < 2 && !database.objectStoreNames.contains('meta')) {
-          database.createObjectStore('meta', { keyPath: 'ключ' })
-        }
-      },
-    })
+    const loaded = await loadQueue()
+    expect(loaded?.id).toBe('active')
+    expect(loaded?.статус).toBe('остановлена')
+    expect(loaded?.задачи).toHaveLength(1)
+    expect(loaded?.задачи[0]?.idВещи).toBe('вещь-1')
+    expect(loaded?.задачи[0]?.статус).toBe('ожидает')
+    expect(loaded?.последняяОшибка).toBe('Сеть недоступна')
 
-    const afterMigration = await db2.get('items', 'вещь-1')
-    expect(afterMigration?.название).toBe('До миграции')
-    expect(db2.objectStoreNames.contains('meta')).toBe(true)
-    db2.close()
+    await clearQueue()
+    expect(await loadQueue()).toBeUndefined()
   })
 
   it('находит образы по сезону через индекс', async () => {
