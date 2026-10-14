@@ -15,7 +15,7 @@ computing gzip size...
 [2mdist/[22m[2massets/[22m[35mindex-TGtJ-NkM.css                   [39m[1m[2m 32.91 kB[22m[1m[22m[2m │ gzip:   4.97 kB[22m
 [2mdist/[22m[2massets/[22m[36mworkbox-window.prod.es5-BBnX5xw4.js  [39m[1m[2m  5.75 kB[22m[1m[22m[2m │ gzip:   2.36 kB[22m
 [2mdist/[22m[2massets/[22m[36mindex-B2-uEQNO.js                    [39m[1m[2m398.32 kB[22m[1m[22m[2m │ gzip: 123.23 kB[22m
-[32m✓ built in 835ms[39m
+[32m✓ built in 843ms[39m
 
 [36mPWA v1.3.0[39m
 mode      [35mgenerateSW[39m
@@ -23,4 +23,4 @@ precache  [32m14 entries[39m [2m(462.76 KiB)[22m
 files generated
   [2mdist/sw.js[22m
   [2mdist/workbox-9c191d2f.js[22m
-build exit=0
+exit=0
