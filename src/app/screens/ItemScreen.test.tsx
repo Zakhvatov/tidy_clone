@@ -104,7 +104,15 @@ describe('Карточка вещи (T15)', () => {
     renderItem('вещь-1')
 
     expect(await screen.findByRole('heading', { name: 'Худи тестовое' })).toBeInTheDocument()
-    expect(screen.getByText('чёрный, белый')).toBeInTheDocument()
+    const цвета = screen.getByRole('group', { name: 'Цвета вещи' })
+    expect(within(цвета).getByRole('button', { name: 'чёрный' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(within(цвета).getByRole('button', { name: 'белый' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
     expect(screen.getByText('хлопок, полиэстер')).toBeInTheDocument()
     expect(screen.getByText('Тестовый бренд')).toBeInTheDocument()
     expect(screen.getByText('Ссылка')).toBeInTheDocument()
@@ -324,5 +332,61 @@ describe('Карточка вещи (T15)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Сервис оцифровки отклонил запрос (401)',
     )
+  })
+
+  it('правка сезона в карточке сохраняется в IndexedDB и переживает перезапуск', async () => {
+    await items.create(makeItem({ id: 'вещь-1', сезон: [] }))
+    await images.addOriginal(
+      makeImage('о-1', 'вещь-1', 'оригинал', '2024-03-05T10:00:00.000Z', 'orig'),
+    )
+
+    renderItem('вещь-1')
+
+    const сезоны = await screen.findByRole('group', { name: 'Сезон вещи' })
+    fireEvent.click(within(сезоны).getByRole('button', { name: 'лето' }))
+
+    await waitFor(async () => {
+      expect((await items.get('вещь-1'))?.сезон).toEqual(['лето'])
+    })
+
+    fireEvent.click(within(сезоны).getByRole('button', { name: 'демисезон' }))
+
+    await waitFor(async () => {
+      expect((await items.get('вещь-1'))?.сезон).toEqual(['лето', 'демисезон'])
+    })
+
+    // Повторное нажатие снимает сезон.
+    fireEvent.click(within(сезоны).getByRole('button', { name: 'лето' }))
+    await waitFor(async () => {
+      expect((await items.get('вещь-1'))?.сезон).toEqual(['демисезон'])
+    })
+
+    // «Перезапуск»: закрываем и заново открываем БД — правка на месте.
+    await closeDb()
+    expect((await items.get('вещь-1'))?.сезон).toEqual(['демисезон'])
+  })
+
+  it('правка цветов в карточке сохраняется в IndexedDB и переживает перезапуск', async () => {
+    await items.create(makeItem({ id: 'вещь-1', цвета: [] }))
+    await images.addOriginal(
+      makeImage('о-1', 'вещь-1', 'оригинал', '2024-03-05T10:00:00.000Z', 'orig'),
+    )
+
+    renderItem('вещь-1')
+
+    const цвета = await screen.findByRole('group', { name: 'Цвета вещи' })
+    fireEvent.click(within(цвета).getByRole('button', { name: 'синий' }))
+
+    await waitFor(async () => {
+      expect((await items.get('вещь-1'))?.цвета).toEqual(['синий'])
+    })
+
+    fireEvent.click(within(цвета).getByRole('button', { name: 'синий' }))
+    await waitFor(async () => {
+      expect((await items.get('вещь-1'))?.цвета).toEqual([])
+    })
+
+    await closeDb()
+    expect((await items.get('вещь-1'))?.цвета).toEqual([])
   })
 })

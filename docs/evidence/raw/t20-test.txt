@@ -1,0 +1,29 @@
+
+> tidy-clone@0.1.0 test
+> vitest run
+
+
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90m/Users/aleksandrzahvatov/orca/projects/tidy_clone[39m
+
+[90mstderr[2m | src/app/screens/BackupScreen.test.tsx[2m > [22m[2mЭкран резервной копии (T19)[2m > [22m[2mэкспортирует гардероб одним файлом и сообщает итог
+[22m[39mNot implemented: navigation to another Document
+
+ [32m✓[39m src/app/screens/BackupScreen.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 613[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран резервной копии (T19)[2m > [22mдоступен из навигации и по адресу /backup [33m 313[2mms[22m[39m
+[90mstdout[2m | src/__independent__/e2e.test.tsx[2m > [22m[2mНЕЗАВИСИМО: производительность[2m > [22m[2m50 вещей: чтение и группировка быстрые (свой замер, не из T13)
+[22m[39m[independent perf] loadWardrobe: 1.18 мс, группировка: 0.18 мс, план: 1.35 мс
+
+ [32m✓[39m src/app/screens/OutfitsScreen.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 1177[2mms[22m[39m
+   [33m[2m✓[22m[39m Список образов (T18)[2m > [22mпустой экран: «Образов пока нет» и кнопка «Собрать образ» ведёт на /outfit/new [33m 380[2mms[22m[39m
+[90mstdout[2m | src/__independent__/e2e.test.tsx[2m > [22m[2mНЕЗАВИСИМО: производительность[2m > [22m[2m20 вещей в очереди оцифровки обрабатываются все
+[22m[39m[independent perf] 20 вещей в очереди: 80.8 мс
+
+ [32m✓[39m src/__independent__/e2e.test.tsx [2m([22m[2m28 tests[22m[2m)[22m[33m 1223[2mms[22m[39m
+   [33m[2m✓[22m[39m НАЙДЕННЫЕ ДЕФЕКТЫ (регресс-тесты: дефекты исправлены, поведение закреплено)[2m > [22mДЕФЕКТ 1: из сетки нельзя открыть карточку вещи (клик ведёт на «/») [33m 393[2mms[22m[39m
+ [32m✓[39m src/app/screens/AddScreen.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1306[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран добавления вещи (T8)[2m > [22mсохраняет вещь по ссылке с Оригиналом и категорией из словаря [33m 506[2mms[22m[39m
+ [32m✓[39m src/app/offline.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 350[2mms[22m[39m
+ [32m✓[39m src/app/screens/WardrobeScreen.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[33m 2074[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран гардероба (T13)[2m > [22mпустой гардероб: пустое состояние и кнопка «Добавить вещь» ведёт на /add [33m 385[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран гардероба (T13)[2m > [22m50 вещей: 8+1 секция, счётчики и порядок секций по ADR-0004 [33m 704[2mms[22m[39m
+ [32m✓[39m src/ui/DigitizePanel.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 343[2mms[22m[39m

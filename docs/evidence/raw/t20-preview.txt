@@ -1,0 +1,21 @@
+# T20 · проверка собранного dist через vite preview (localhost), 2026-10-14
+
+## GET /
+http=200 type=text/html bytes=937
+viewport: name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+manifest link: <link rel="manifest" href="/manifest.webmanifest">
+
+## GET /help (SPA-fallback на index.html)
+http=200 type=text/html bytes=937
+same-as-root: yes
+
+## GET /manifest.webmanifest
+http=200 type=application/manifest+json bytes=622
+{"name":"Гардероб","short_name":"Гардероб","description":"Личный цифровой гардероб: вещи по ссылке или фото, образы и офлайн-режим.","start_url":"/","display":"standalone","background_color":"#FFFFFF","theme_color":"#FFFFFF","lang":"ru","scope":"/","dir":"ltr","orientation":"portrait","icons":[{"src":"/pwa-192x192.png","sizes":"192x192","type":"image/png","purpose":"any"},{"src":"/pwa-512x512.png","sizes":"512x512","type":"image/png","purpose":"any"},{"src":"/maskable-512x512.png","sizes":"512x512","type":"image/png","purpose":"maskable"}]}
+
+
+## Размеры иконок из PNG-заголовка
+dist/pwa-192x192.png: 192x192
+dist/pwa-512x512.png: 512x512
+dist/maskable-512x512.png: 512x512
+dist/apple-touch-icon.png: 180x180

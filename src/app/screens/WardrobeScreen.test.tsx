@@ -229,4 +229,156 @@ describe('Экран гардероба (T13)', () => {
     expect(await screen.findByRole('region', { name: 'Второй слой' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Худи' })).toBeInTheDocument()
   })
+
+  it('фильтр по верхней категории даёт плоский результат со счётчиком, сброс возвращает полки', async () => {
+    await items.create(
+      makeItem({ id: 'в-худи', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
+    )
+    await items.create(
+      makeItem({
+        id: 'в-кроссовки',
+        название: 'Кроссовки',
+        категория: 'Обувь',
+        подкатегория: 'кроссовки',
+      }),
+    )
+
+    renderWardrobe()
+
+    expect(await screen.findByRole('region', { name: 'Второй слой' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Обувь' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Обувь' }))
+
+    expect(await screen.findByText('Найдено 1')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Результаты' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Второй слой' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Кроссовки' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Худи' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Сбросить фильтры' }))
+
+    expect(await screen.findByRole('region', { name: 'Второй слой' })).toBeInTheDocument()
+    expect(screen.queryByText('Найдено 1')).toBeNull()
+  })
+
+  it('чипы подкатегорий зависят от выбранной верхней категории', async () => {
+    await items.create(
+      makeItem({ id: 'в-худи', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
+    )
+    await items.create(
+      makeItem({ id: 'в-футболка', название: 'Футболка', категория: 'Верх', подкатегория: 'футболка' }),
+    )
+
+    renderWardrobe()
+
+    expect(screen.queryByRole('group', { name: 'Подкатегории' })).toBeNull()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Верх' }))
+
+    const под = await screen.findByRole('group', { name: 'Подкатегории' })
+    expect(within(под).getByRole('button', { name: 'футболка' })).toBeInTheDocument()
+    expect(within(под).queryByRole('button', { name: 'худи' })).toBeNull()
+
+    fireEvent.click(within(под).getByRole('button', { name: 'футболка' }))
+
+    expect(await screen.findByText('Найдено 1')).toBeInTheDocument()
+  })
+
+  it('фильтры по цвету и сезону комбинируются по «И»', async () => {
+    await items.create(
+      makeItem({
+        id: 'в-пальто',
+        название: 'Пальто',
+        категория: 'Верхняя одежда',
+        подкатегория: 'пальто',
+        цвета: ['чёрный'],
+        сезон: ['зима'],
+      }),
+    )
+    await items.create(
+      makeItem({
+        id: 'в-футболка',
+        название: 'Футболка',
+        категория: 'Верх',
+        подкатегория: 'футболка',
+        цвета: ['чёрный'],
+        сезон: ['лето'],
+      }),
+    )
+    await items.create(
+      makeItem({
+        id: 'в-топ',
+        название: 'Топ',
+        категория: 'Верх',
+        подкатегория: 'топ',
+        цвета: ['белый'],
+        сезон: ['зима'],
+      }),
+    )
+
+    renderWardrobe()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'чёрный' }))
+    expect(await screen.findByText('Найдено 2')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'зима' }))
+    expect(await screen.findByText('Найдено 1')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Пальто' })).toBeInTheDocument()
+  })
+
+  it('поиск по названию: регистр и «ё» не важны, список сужается', async () => {
+    await items.create(
+      makeItem({ id: 'в-ёлочка', название: 'Платье Ёлочка', категория: 'Платья', подкатегория: 'платье' }),
+    )
+    await items.create(
+      makeItem({ id: 'в-джинсы', название: 'Джинсы синие', категория: 'Низ', подкатегория: 'джинсы' }),
+    )
+
+    renderWardrobe()
+
+    fireEvent.change(await screen.findByLabelText('Поиск по названию'), {
+      target: { value: 'ЕЛОЧКА' },
+    })
+
+    expect(await screen.findByText('Найдено 1')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Платье Ёлочка' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Джинсы синие' })).toBeNull()
+  })
+
+  it('ничего не найдено: состояние с предложением сбросить фильтры и возврат к полкам', async () => {
+    await items.create(
+      makeItem({ id: 'в-худи', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
+    )
+
+    renderWardrobe()
+
+    fireEvent.change(await screen.findByLabelText('Поиск по названию'), {
+      target: { value: 'такого нет' },
+    })
+
+    expect(await screen.findByText('Ничего не найдено')).toBeInTheDocument()
+    expect(
+      screen.getByText('Попробуйте изменить запрос или сбросить фильтры'),
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Сбросить фильтры' }))
+
+    expect(await screen.findByRole('region', { name: 'Второй слой' })).toBeInTheDocument()
+  })
+
+  it('ввод в поиск не перечитывает IndexedDB: данные читаются один раз, фильтрация — в памяти', async () => {
+    await items.create(
+      makeItem({ id: 'в-худи', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
+    )
+    vi.mocked(loadWardrobe).mockClear()
+
+    renderWardrobe()
+    await screen.findByRole('region', { name: 'Второй слой' })
+    expect(vi.mocked(loadWardrobe)).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(screen.getByLabelText('Поиск по названию'), { target: { value: 'худ' } })
+    expect(await screen.findByText('Найдено 1')).toBeInTheDocument()
+    expect(vi.mocked(loadWardrobe)).toHaveBeenCalledTimes(1)
+  })
 })

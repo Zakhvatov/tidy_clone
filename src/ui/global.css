@@ -23,7 +23,11 @@ body {
 }
 
 button,
-input {
+input,
+select {
+  /* `font: inherit` держит контролы на системном шрифте 16px из `body`.
+     Это важно после отказа от `user-scalable=no`: iOS Safari зумит страницу
+     при фокусе на поле со шрифтом меньше 16px, и вёрстка «прыгает». */
   font: inherit;
   color: inherit;
 }

@@ -1,0 +1,82 @@
+
+> tidy-clone@0.1.0 test
+> vitest run
+
+
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90m/Users/aleksandrzahvatov/orca/projects/tidy_clone[39m
+
+[90mstderr[2m | src/app/screens/BackupScreen.test.tsx[2m > [22m[2mЭкран резервной копии (T19)[2m > [22m[2mэкспортирует гардероб одним файлом и сообщает итог
+[22m[39mNot implemented: navigation to another Document
+
+ [32m✓[39m src/app/screens/BackupScreen.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 1023[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран резервной копии (T19)[2m > [22mдоступен из навигации и по адресу /backup [33m 484[2mms[22m[39m
+[90mstdout[2m | src/__independent__/e2e.test.tsx[2m > [22m[2mНЕЗАВИСИМО: производительность[2m > [22m[2m50 вещей: чтение и группировка быстрые (свой замер, не из T13)
+[22m[39m[independent perf] loadWardrobe: 1.35 мс, группировка: 0.37 мс, план: 3.40 мс
+
+[90mstdout[2m | src/__independent__/e2e.test.tsx[2m > [22m[2mНЕЗАВИСИМО: производительность[2m > [22m[2m20 вещей в очереди оцифровки обрабатываются все
+[22m[39m[independent perf] 20 вещей в очереди: 151.9 мс
+
+ [32m✓[39m src/__independent__/e2e.test.tsx [2m([22m[2m28 tests[22m[2m)[22m[33m 1725[2mms[22m[39m
+   [33m[2m✓[22m[39m НАЙДЕННЫЕ ДЕФЕКТЫ (регресс-тесты: дефекты исправлены, поведение закреплено)[2m > [22mДЕФЕКТ 1: из сетки нельзя открыть карточку вещи (клик ведёт на «/») [33m 582[2mms[22m[39m
+ [32m✓[39m src/app/screens/OutfitsScreen.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 2204[2mms[22m[39m
+   [33m[2m✓[22m[39m Список образов (T18)[2m > [22mпустой экран: «Образов пока нет» и кнопка «Собрать образ» ведёт на /outfit/new [33m 717[2mms[22m[39m
+   [33m[2m✓[22m[39m Список образов (T18)[2m > [22mфильтр по сезону прячет чужие образы и возвращает их по «Все» [33m 390[2mms[22m[39m
+ [32m✓[39m src/app/screens/AddScreen.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 2367[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран добавления вещи (T8)[2m > [22mсохраняет вещь по ссылке с Оригиналом и категорией из словаря [33m 907[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран добавления вещи (T8)[2m > [22mнеизвестную категорию WB кладёт в «Разное», но вещь сохраняет [33m 334[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран добавления вещи (T8)[2m > [22mпо фото берёт категорию у vision и сохраняет вещь [33m 307[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран добавления вещи (T8)[2m > [22mповторное добавление не ломает уже сохранённые вещи [33m 492[2mms[22m[39m
+ [32m✓[39m src/app/screens/WardrobeScreen.test.tsx [2m([22m[2m7 tests[22m[2m)[22m[33m 2470[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран гардероба (T13)[2m > [22mпустой гардероб: пустое состояние и кнопка «Добавить вещь» ведёт на /add [33m 679[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран гардероба (T13)[2m > [22m50 вещей: 8+1 секция, счётчики и порядок секций по ADR-0004 [33m 1415[2mms[22m[39m
+ [32m✓[39m src/app/screens/ItemScreen.test.tsx [2m([22m[2m11 tests[22m[2m)[22m[33m 2810[2mms[22m[39m
+   [33m[2m✓[22m[39m Карточка вещи (T15)[2m > [22mпо id показывает данные вещи: название, атрибуты, источник и категорию [33m 629[2mms[22m[39m
+   [33m[2m✓[22m[39m Карточка вещи (T15)[2m > [22mпри наличии AI-версии переключатель меняет изображение, пометка «AI-версия» видна [33m 462[2mms[22m[39m
+ [32m✓[39m src/services/digitize-queue.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 697[2mms[22m[39m
+   [33m[2m✓[22m[39m Очередь оцифровки (T12)[2m > [22m20 вещей подряд оцифровываются без потерь [33m 331[2mms[22m[39m
+ [32m✓[39m src/ui/DigitizePanel.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 353[2mms[22m[39m
+ [32m✓[39m src/services/backup.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 285[2mms[22m[39m
+ [32m✓[39m src/app/offline.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 716[2mms[22m[39m
+   [33m[2m✓[22m[39m Офлайн-режим (T19)[2m > [22mэкран / открывается без сети [33m 471[2mms[22m[39m
+ [32m✓[39m src/services/digitize.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 242[2mms[22m[39m
+[90mstdout[2m | src/services/wardrobe.test.ts[2m > [22m[2mЧтение гардероба (T13)[2m > [22m[2m50 вещей: чтение и группировка укладываются в порог
+[22m[39m[T13 perf] loadWardrobe: 0.6 мс, группировка: 0.0 мс, вещей: 50
+
+ [32m✓[39m src/services/wardrobe.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 175[2mms[22m[39m
+ [32m✓[39m src/app/routing.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 558[2mms[22m[39m
+   [33m[2m✓[22m[39m Маршрутизация[2m > [22mоткрывает экран гардероба на / [33m 341[2mms[22m[39m
+ [32m✓[39m src/app/screens/OutfitEditorScreen.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 4641[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mдобавляет вещь из пикера в коллаж одним нажатием [33m 1128[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mперетаскивание меняет позицию и сохраняется [33m 519[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mизменение порядка слоёв и подложки сохраняется [33m 1081[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mобраз из 5 вещей собирается через UI, сохраняется и перечитывается после перезапуска [33m 1348[2mms[22m[39m
+ [32m✓[39m src/storage/storage.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 85[2mms[22m[39m
+ [32m✓[39m src/app/screens/digitizeBridge.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m src/app/sw.test.tsx [2m([22m[2m1 test[22m[2m)[22m[33m 338[2mms[22m[39m
+   [33m[2m✓[22m[39m Регистрация service worker[2m > [22mрегистрирует SW и не ломает рендер приложения [33m 337[2mms[22m[39m
+ [32m✓[39m src/services/classify-photo.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+ [32m✓[39m src/services/cutout.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m src/domain/wb-taxonomy.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 80[2mms[22m[39m
+ [32m✓[39m src/ui/ItemImage.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 199[2mms[22m[39m
+ [32m✓[39m src/services/wb/packshot.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m src/services/tidy-api.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 53[2mms[22m[39m
+[90mstdout[2m | src/services/wardrobe-filter.test.ts[2m > [22m[2mФильтры и поиск (T14)[2m > [22m[2m50 вещей: filterAndSearch укладывается в порог
+[22m[39m[T14 perf] filterAndSearch на 50 вещах: 0.03 мс
+
+ [32m✓[39m src/services/wardrobe-filter.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m src/services/import-item.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 70[2mms[22m[39m
+ [32m✓[39m src/services/wb/parse-link.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 204[2mms[22m[39m
+ [32m✓[39m src/domain/prompt-templates.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 83[2mms[22m[39m
+ [32m✓[39m src/services/outfit-render.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m src/app/manifest.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m src/services/wb/card.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m src/domain/taxonomy.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m src/services/outfit-background.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m src/app/pwa.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 2[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m33 passed[39m[22m[90m (33)[39m
+[2m      Tests [22m [1m[32m312 passed[39m[22m[90m (312)[39m
+[2m   Start at [22m 04:01:09
+[2m   Duration [22m 12.63s[2m (transform 2.63s, setup 9.01s, collect 14.74s, tests 21.56s, environment 29.06s, prepare 3.23s)[22m
+
+npm test exit=0

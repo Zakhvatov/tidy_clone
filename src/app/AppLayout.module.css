@@ -14,7 +14,7 @@
   position: sticky;
   bottom: 0;
   display: flex;
-  gap: 8px;
+  gap: 4px;
   padding: 10px var(--space-edge) calc(var(--safe-bottom) + 10px);
   background: color-mix(in srgb, var(--color-bg) 92%, transparent);
   backdrop-filter: blur(12px);
@@ -23,14 +23,25 @@
 
 .tab {
   flex: 1;
-  padding: 12px 8px;
+  min-width: 0;
+  padding: 12px 4px;
   border-radius: var(--radius-pill);
   text-align: center;
   text-decoration: none;
   color: var(--color-text-secondary);
-  font-size: 15px;
+  /* Пять пунктов в панели: 13px помещается и на iPhone SE (375px). */
+  font-size: 13px;
+  white-space: nowrap;
   transition: color var(--motion-fast) var(--motion-ease),
     background-color var(--motion-fast) var(--motion-ease);
+}
+
+/* Очень узкие экраны (320px): ещё меньше, чтобы подписи не обрезались. */
+@media (max-width: 359px) {
+  .tab {
+    font-size: 11px;
+    padding: 10px 2px;
+  }
 }
 
 .tabActive {

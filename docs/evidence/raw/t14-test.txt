@@ -1,0 +1,72 @@
+
+> tidy-clone@0.1.0 test
+> vitest run
+
+
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90m/Users/aleksandrzahvatov/orca/projects/tidy_clone[39m
+
+[90mstderr[2m | src/app/screens/BackupScreen.test.tsx[2m > [22m[2mЭкран резервной копии (T19)[2m > [22m[2mэкспортирует гардероб одним файлом и сообщает итог
+[22m[39mNot implemented: navigation to another Document
+
+ [32m✓[39m src/app/screens/BackupScreen.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[33m 646[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран резервной копии (T19)[2m > [22mдоступен из навигации и по адресу /backup [33m 347[2mms[22m[39m
+[90mstdout[2m | src/__independent__/e2e.test.tsx[2m > [22m[2mНЕЗАВИСИМО: производительность[2m > [22m[2m50 вещей: чтение и группировка быстрые (свой замер, не из T13)
+[22m[39m[independent perf] loadWardrobe: 2.63 мс, группировка: 0.18 мс, план: 1.46 мс
+
+[90mstdout[2m | src/__independent__/e2e.test.tsx[2m > [22m[2mНЕЗАВИСИМО: производительность[2m > [22m[2m20 вещей в очереди оцифровки обрабатываются все
+[22m[39m[independent perf] 20 вещей в очереди: 89.8 мс
+
+ [32m✓[39m src/__independent__/e2e.test.tsx [2m([22m[2m28 tests[22m[2m)[22m[33m 1230[2mms[22m[39m
+   [33m[2m✓[22m[39m НАЙДЕННЫЕ ДЕФЕКТЫ (регресс-тесты: дефекты исправлены, поведение закреплено)[2m > [22mДЕФЕКТ 1: из сетки нельзя открыть карточку вещи (клик ведёт на «/») [33m 385[2mms[22m[39m
+ [32m✓[39m src/app/screens/OutfitsScreen.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 1265[2mms[22m[39m
+   [33m[2m✓[22m[39m Список образов (T18)[2m > [22mпустой экран: «Образов пока нет» и кнопка «Собрать образ» ведёт на /outfit/new [33m 462[2mms[22m[39m
+ [32m✓[39m src/app/screens/AddScreen.test.tsx [2m([22m[2m6 tests[22m[2m)[22m[33m 1378[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран добавления вещи (T8)[2m > [22mсохраняет вещь по ссылке с Оригиналом и категорией из словаря [33m 523[2mms[22m[39m
+ [32m✓[39m src/app/screens/WardrobeScreen.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[33m 2031[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран гардероба (T13)[2m > [22mпустой гардероб: пустое состояние и кнопка «Добавить вещь» ведёт на /add [33m 373[2mms[22m[39m
+   [33m[2m✓[22m[39m Экран гардероба (T13)[2m > [22m50 вещей: 8+1 секция, счётчики и порядок секций по ADR-0004 [33m 745[2mms[22m[39m
+ [32m✓[39m src/app/routing.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[33m 402[2mms[22m[39m
+ [32m✓[39m src/app/screens/ItemScreen.test.tsx [2m([22m[2m13 tests[22m[2m)[22m[33m 2453[2mms[22m[39m
+   [33m[2m✓[22m[39m Карточка вещи (T15)[2m > [22mпо id показывает данные вещи: название, атрибуты, источник и категорию [33m 468[2mms[22m[39m
+ [32m✓[39m src/ui/DigitizePanel.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 239[2mms[22m[39m
+ [32m✓[39m src/app/offline.test.tsx [2m([22m[2m5 tests[22m[2m)[22m[32m 278[2mms[22m[39m
+ [32m✓[39m src/services/digitize-queue.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 594[2mms[22m[39m
+ [32m✓[39m src/app/screens/OutfitEditorScreen.test.tsx [2m([22m[2m9 tests[22m[2m)[22m[33m 3000[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mдобавляет вещь из пикера в коллаж одним нажатием [33m 572[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mизменение порядка слоёв и подложки сохраняется [33m 768[2mms[22m[39m
+   [33m[2m✓[22m[39m Редактор коллажа (T16) и пикер вещей (T17)[2m > [22mобраз из 5 вещей собирается через UI, сохраняется и перечитывается после перезапуска [33m 897[2mms[22m[39m
+ [32m✓[39m src/services/digitize.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 232[2mms[22m[39m
+[90mstdout[2m | src/services/wardrobe.test.ts[2m > [22m[2mЧтение гардероба (T13)[2m > [22m[2m50 вещей: чтение и группировка укладываются в порог
+[22m[39m[T13 perf] loadWardrobe: 3.5 мс, группировка: 0.0 мс, вещей: 50
+
+ [32m✓[39m src/services/wardrobe.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 206[2mms[22m[39m
+ [32m✓[39m src/app/sw.test.tsx [2m([22m[2m1 test[22m[2m)[22m[32m 160[2mms[22m[39m
+ [32m✓[39m src/storage/storage.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m src/services/classify-photo.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 53[2mms[22m[39m
+ [32m✓[39m src/services/backup.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 254[2mms[22m[39m
+ [32m✓[39m src/services/cutout.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m src/ui/ItemImage.test.tsx [2m([22m[2m4 tests[22m[2m)[22m[32m 73[2mms[22m[39m
+ [32m✓[39m src/domain/wb-taxonomy.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 37[2mms[22m[39m
+ [32m✓[39m src/services/tidy-api.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 46[2mms[22m[39m
+ [32m✓[39m src/services/wb/card.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m src/domain/prompt-templates.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m src/services/import-item.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+[90mstdout[2m | src/services/wardrobe-filter.test.ts[2m > [22m[2mФильтры и поиск (T14)[2m > [22m[2m50 вещей: filterAndSearch укладывается в порог
+[22m[39m[T14 perf] filterAndSearch на 50 вещах: 0.05 мс
+
+ [32m✓[39m src/services/wardrobe-filter.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m src/services/wb/parse-link.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m src/domain/taxonomy.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m src/services/outfit-render.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m src/services/wb/packshot.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 25[2mms[22m[39m
+ [32m✓[39m src/app/screens/digitizeBridge.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m src/app/manifest.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m src/app/pwa.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 2[2mms[22m[39m
+ [32m✓[39m src/services/outfit-background.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 3[2mms[22m[39m
+ [32m✓[39m src/app/screens/HelpScreen.test.tsx [2m([22m[2m2 tests[22m[2m)[22m[32m 223[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m34 passed[39m[22m[90m (34)[39m
+[2m      Tests [22m [1m[32m322 passed[39m[22m[90m (322)[39m
+[2m   Start at [22m 04:03:37
+[2m   Duration [22m 7.79s[2m (transform 1.23s, setup 4.77s, collect 7.97s, tests 15.03s, environment 16.44s, prepare 2.32s)[22m
+

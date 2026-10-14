@@ -40,10 +40,11 @@ describe('Маршрутизация', () => {
     expect(screen.getByRole('textbox', { name: 'Ссылка на товар' })).toBeInTheDocument()
   })
 
-  it('открывает экран образов на /outfits', () => {
+  it('открывает экран образов на /outfits', async () => {
     renderAt('/outfits')
     expect(screen.getByRole('heading', { name: 'Образы' })).toBeInTheDocument()
-    expect(screen.getByText('Образов пока нет')).toBeInTheDocument()
+    // Список читается из IndexedDB асинхронно (T18).
+    expect(await screen.findByText('Образов пока нет')).toBeInTheDocument()
   })
 
   it('неизвестный путь уводит на гардероб', () => {

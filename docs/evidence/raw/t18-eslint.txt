@@ -1,0 +1,6 @@
+[0m[0m
+[0m[4m/Users/aleksandrzahvatov/orca/projects/tidy_clone/src/app/screens/OutfitsScreen.module.css[24m[0m
+[0m  [2m0:0[22m  [33mwarning[39m  File ignored because no matching configuration was supplied[0m
+[0m[0m
+[0m[33m[1m✖ 1 problem (0 errors, 1 warning)[22m[39m[0m
+[0m[33m[1m[22m[39m[0m

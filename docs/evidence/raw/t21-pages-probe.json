@@ -1,0 +1,30 @@
+[
+  {
+    "url": "https://tidy-clone.pages.dev/",
+    "status": 200,
+    "type": "text/html; charset=utf-8",
+    "bytes": 955,
+    "ms": 93
+  },
+  {
+    "url": "https://tidy-clone.pages.dev/manifest.webmanifest",
+    "status": 200,
+    "type": "application/manifest+json",
+    "bytes": 622,
+    "ms": 6
+  },
+  {
+    "url": "https://tidy-clone.pages.dev/sw.js",
+    "status": 200,
+    "type": "application/javascript",
+    "bytes": 1731,
+    "ms": 157
+  },
+  {
+    "url": "https://tidy-clone.pages.dev/apple-touch-icon.png",
+    "status": 200,
+    "type": "image/png",
+    "bytes": 3188,
+    "ms": 6
+  }
+]

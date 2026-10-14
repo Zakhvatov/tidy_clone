@@ -7,6 +7,7 @@ const tabs = [
   { to: '/add', label: 'Добавить', end: false },
   { to: '/outfits', label: 'Образы', end: false },
   { to: '/backup', label: 'Копия', end: false },
+  { to: '/help', label: 'Помощь', end: false },
 ]
 
 /** Общий каркас приложения: область экрана + нижняя навигация. */

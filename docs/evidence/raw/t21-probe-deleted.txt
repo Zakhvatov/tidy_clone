@@ -1,0 +1,10 @@
+# T21 · удаление одноразовой edge-пробы, 2026-10-14
+
+$ wrangler delete --name tidy-probe-t21 --force
+Successfully deleted tidy-probe-t21
+
+# проверка после удаления:
+$ curl -sS -m 15 -o /dev/null -w "http=%{http_code}\n" https://tidy-probe-t21.megabaff2011.workers.dev/
+http=404
+
+# временный каталог сборки пробы удалён: /tmp/tidy-probe-t21

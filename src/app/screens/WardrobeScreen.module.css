@@ -1,3 +1,129 @@
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.search {
+  width: 100%;
+  padding: 13px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  outline: none;
+  transition: border-color var(--motion-fast) var(--motion-ease);
+}
+
+.search:focus {
+  border-color: var(--color-accent);
+}
+
+.chipGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
+}
+
+.chipActive {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: #ffffff;
+}
+
+.controlsFooter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.found {
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.reset {
+  padding: 10px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg);
+  color: var(--color-accent);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+
+.reset:active {
+  background: var(--color-surface);
+}
+
+.nothing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 220px;
+  padding: var(--space-edge);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface);
+  text-align: center;
+  animation: nothing-in var(--motion-base) var(--motion-ease);
+}
+
+.nothingTitle {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.nothingHint {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+}
+
+.nothingButton {
+  width: auto;
+  margin-top: 4px;
+  padding: 12px 22px;
+}
+
+@keyframes nothing-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nothing {
+    animation: none;
+  }
+}
+
 .section {
   display: flex;
   flex-direction: column;

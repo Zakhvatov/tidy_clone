@@ -11,7 +11,7 @@ function установитьСеть(значение: boolean): void {
   Object.defineProperty(navigator, 'onLine', { configurable: true, value: значение })
 }
 
-const МАРШРУТЫ = ['/', '/add', '/outfits', '/backup']
+const МАРШРУТЫ = ['/', '/add', '/outfits', '/backup', '/help']
 
 /**
  * Офлайн-режим T19: данные локальные, поэтому ни один экран не должен падать

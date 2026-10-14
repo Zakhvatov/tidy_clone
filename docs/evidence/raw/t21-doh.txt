@@ -1,0 +1,13 @@
+# T21 · DNS-over-HTTPS (cloudflare-dns.com), 2026-10-14
+
+## tidy-clone.pages.dev type=A
+{"Status":0,"TC":false,"RD":true,"RA":true,"AD":false,"CD":false,"Question":[{"name":"tidy-clone.pages.dev","type":1}],"Answer":[{"name":"tidy-clone.pages.dev","type":1,"TTL":300,"data":"172.66.45.7"},{"name":"tidy-clone.pages.dev","type":1,"TTL":300,"data":"172.66.46.249"}]}
+
+## tidy-clone.pages.dev type=AAAA
+{"Status":0,"TC":false,"RD":true,"RA":true,"AD":false,"CD":false,"Question":[{"name":"tidy-clone.pages.dev","type":28}],"Answer":[{"name":"tidy-clone.pages.dev","type":28,"TTL":300,"data":"2606:4700:310c::ac42:2d07"},{"name":"tidy-clone.pages.dev","type":28,"TTL":300,"data":"2606:4700:310c::ac42:2ef9"}]}
+
+## tidy-api.megabaff2011.workers.dev type=A
+{"Status":0,"TC":false,"RD":true,"RA":true,"AD":false,"CD":false,"Question":[{"name":"tidy-api.megabaff2011.workers.dev","type":1}],"Answer":[{"name":"tidy-api.megabaff2011.workers.dev","type":1,"TTL":300,"data":"104.21.48.90"},{"name":"tidy-api.megabaff2011.workers.dev","type":1,"TTL":300,"data":"172.67.183.11"}]}
+
+## tidy-api.megabaff2011.workers.dev type=AAAA
+{"Status":0,"TC":false,"RD":true,"RA":true,"AD":false,"CD":false,"Question":[{"name":"tidy-api.megabaff2011.workers.dev","type":28}],"Answer":[{"name":"tidy-api.megabaff2011.workers.dev","type":28,"TTL":300,"data":"2606:4700:3037::6815:305a"},{"name":"tidy-api.megabaff2011.workers.dev","type":28,"TTL":300,"data":"2606:4700:3032::ac43:b70b"}]}

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
-import type { ImageRole, Изображение, ItemSource, Вещь } from '../../domain/types'
+import type { ImageRole, Изображение, ItemSource, Season, Вещь } from '../../domain/types'
+import { ПАЛИТРА_ЦВЕТОВ, СЕЗОНЫ } from '../../services/wardrobe-filter'
 import { ОшибкаВещьВОбразе } from '../../storage/errors'
 import { listByItem } from '../../storage/images'
 import { get as получитьВещь, remove as удалитьВещь, update as обновитьВещь } from '../../storage/items'
@@ -184,6 +185,47 @@ export function ItemScreen() {
     }
   }
 
+  /** Правка атрибутов сохраняется сразу; при сбое оптимистичная правка откатывается. */
+  async function сохранитьСезон(новый: Season[]) {
+    if (вещь === null) return
+    const предыдущая = вещь
+    setОшибка(null)
+    setВещь({ ...вещь, сезон: новый })
+    try {
+      const обновлённая = await обновитьВещь(вещь.id, { сезон: новый })
+      setВещь(обновлённая)
+    } catch {
+      setВещь(предыдущая)
+      setОшибка('Не удалось сохранить сезон. Попробуйте ещё раз')
+    }
+  }
+
+  async function сохранитьЦвета(новые: string[]) {
+    if (вещь === null) return
+    const предыдущая = вещь
+    setОшибка(null)
+    setВещь({ ...вещь, цвета: новые })
+    try {
+      const обновлённая = await обновитьВещь(вещь.id, { цвета: новые })
+      setВещь(обновлённая)
+    } catch {
+      setВещь(предыдущая)
+      setОшибка('Не удалось сохранить цвета. Попробуйте ещё раз')
+    }
+  }
+
+  const переключитьСезон = (сезон: Season) => {
+    if (вещь === null) return
+    const есть = вещь.сезон.includes(сезон)
+    void сохранитьСезон(есть ? вещь.сезон.filter((з) => з !== сезон) : [...вещь.сезон, сезон])
+  }
+
+  const переключитьЦвет = (цвет: string) => {
+    if (вещь === null) return
+    const есть = вещь.цвета.includes(цвет)
+    void сохранитьЦвета(есть ? вещь.цвета.filter((ц) => ц !== цвет) : [...вещь.цвета, цвет])
+  }
+
   async function сделатьAiВерсию(force: boolean) {
     if (вещь === null) return
     setОшибка(null)
@@ -252,6 +294,9 @@ export function ItemScreen() {
   }
 
   const название = вещь.название.trim() === '' ? 'Без названия' : вещь.название.trim()
+  // Палитра предлагает типовые цвета, но цвета вещи из карточки WB не теряются:
+  // даже незнакомый палитре цвет остаётся отдельным чипом.
+  const цветаДляПравки = [...new Set([...ПАЛИТРА_ЦВЕТОВ, ...вещь.цвета])]
 
   return (
     <section className={screenStyles.screen}>
@@ -297,7 +342,6 @@ export function ItemScreen() {
         <h1 className={styles.name}>{название}</h1>
 
         <dl className={styles.attrs}>
-          <СтрокаАтрибута label="Цвета" value={вещь.цвета.join(', ')} />
           <СтрокаАтрибута label="Состав" value={вещь.состав.join(', ')} />
           <СтрокаАтрибута label="Бренд" value={вещь.бренд} />
           <СтрокаАтрибута label="Источник" value={меткаИсточника(вещь.источник)} />
@@ -328,6 +372,46 @@ export function ItemScreen() {
               void сохранитьКатегорию(категория, подкатегория)
             }}
           />
+        </section>
+
+        <section className={styles.section} aria-label="Сезон">
+          <h2 className={styles.sectionTitle}>Сезон</h2>
+          <div className={styles.chips} role="group" aria-label="Сезон вещи">
+            {СЕЗОНЫ.map((сезон) => {
+              const выбран = вещь.сезон.includes(сезон)
+              return (
+                <button
+                  key={сезон}
+                  type="button"
+                  aria-pressed={выбран}
+                  className={выбран ? `${styles.chip} ${styles.chipActive}` : styles.chip}
+                  onClick={() => переключитьСезон(сезон)}
+                >
+                  {сезон}
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className={styles.section} aria-label="Цвета">
+          <h2 className={styles.sectionTitle}>Цвета</h2>
+          <div className={styles.chips} role="group" aria-label="Цвета вещи">
+            {цветаДляПравки.map((цвет) => {
+              const выбран = вещь.цвета.includes(цвет)
+              return (
+                <button
+                  key={цвет}
+                  type="button"
+                  aria-pressed={выбран}
+                  className={выбран ? `${styles.chip} ${styles.chipActive}` : styles.chip}
+                  onClick={() => переключитьЦвет(цвет)}
+                >
+                  {цвет}
+                </button>
+              )
+            })}
+          </div>
         </section>
 
         <section className={styles.section} aria-label="AI-версия">

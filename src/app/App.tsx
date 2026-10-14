@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppLayout } from './AppLayout'
 import { AddScreen } from './screens/AddScreen'
 import { BackupScreen } from './screens/BackupScreen'
+import { HelpScreen } from './screens/HelpScreen'
 import { ItemScreen } from './screens/ItemScreen'
 import { OutfitEditorScreen } from './screens/OutfitEditorScreen'
 import { OutfitsScreen } from './screens/OutfitsScreen'
@@ -19,6 +20,7 @@ export function AppRoutes() {
         <Route path="outfit/:id" element={<OutfitEditorScreen />} />
         <Route path="outfits" element={<OutfitsScreen />} />
         <Route path="backup" element={<BackupScreen />} />
+        <Route path="help" element={<HelpScreen />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

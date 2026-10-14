@@ -1,0 +1,13 @@
+
+[1m[46m RUN [49m[22m [36mv3.2.7 [39m[90m/Users/aleksandrzahvatov/orca/projects/tidy_clone[39m
+
+[90mstdout[2m | src/services/wardrobe-filter.test.ts[2m > [22m[2mФильтры и поиск (T14)[2m > [22m[2m50 вещей: filterAndSearch укладывается в порог
+[22m[39m[T14 perf] filterAndSearch на 50 вещах: 0.03 мс
+
+ [32m✓[39m src/services/wardrobe-filter.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m13 passed[39m[22m[90m (13)[39m
+[2m   Start at [22m 04:04:09
+[2m   Duration [22m 911ms[2m (transform 60ms, setup 127ms, collect 32ms, tests 13ms, environment 436ms, prepare 67ms)[22m
+
