@@ -2,7 +2,7 @@
 # 2026-10-14 02:50:01 MSK
 # URL: https://tidy-api.megabaff2011.workers.dev
 # Deploy Version ID: d2b9817e-0998-4f04-8c47-90fcb599c7b4
-# CLIENT_TOKEN (значение для VITE_TIDY_CLIENT_TOKEN): 793e12d5783c01bd2d2f62d7976cc3f3171a4df8a4720d4f
+# CLIENT_TOKEN (значение для VITE_TIDY_CLIENT_TOKEN): <СТАРЫЙ_ТОКЕН_ОТОЗВАН_И_УДАЛЁН_ИЗ_ДОКАЗАТЕЛЬСТВ>
 
 ## 1. GET /health — открыт, без деталей
 http=200
