@@ -1,0 +1,17 @@
+# T11 · живой прогон генерации по категориям
+# 2026-10-14T00:02:20.993Z
+# probe https://tidy-t11-probe.megabaff2011.workers.dev
+
+[Верх/1] nmId=14058529 wb=Футболки → ОШИБКА: TimeoutError: The operation was aborted due to timeout
+[Верх/2] nmId=14058765 wb=Рашгарды → ОШИБКА: TimeoutError: The operation was aborted due to timeout
+[Низ/1] nmId=14058401 wb=Брюки → ОШИБКА: TimeoutError: The operation was aborted due to timeout
+[Низ/2] nmId=14058426 wb=Шорты спортивные → ОШИБКА: TimeoutError: The operation was aborted due to timeout
+[Платья/1] nmId=14058746 wb=Платья → ОШИБКА: TimeoutError: The operation was aborted due to timeout
+[Платья/2] nmId=14059125 wb=Сарафаны → ОШИБКА: TimeoutError: The operation was aborted due to timeout
+[Верхняя одежда/1] nmId=14058443 wb=Ветровки → ОШИБКА: TimeoutError: The operation was aborted due to timeout
+[Верхняя одежда/2] nmId=14058526 wb=Пальто → ОШИБКА: TimeoutError: The operation was aborted due to timeout
+[Второй слой/1] nmId=14058606 wb=Толстовки → ОШИБКА: TimeoutError: The operation was aborted due to timeout
+[Второй слой/2] nmId=14059812 wb=Свитшоты → ОШИБКА: TimeoutError: The operation was aborted due to timeout
+[Обувь/1] nmId=14058427 wb=Кеды → ОШИБКА: Error: /gen 502: {"ok":false,"status":502,"body":"{\"error\":{\"code\":\"model_error\",\"message\":\"Модель генерации вернула ошибку\"}}"}
+[Обувь/2] nmId=14058428 wb=Туфли → ОШИБКА: Error: /gen 502: {"ok":false,"status":502,"body":"{\"error\":{\"code\":\"model_error\",\"message\":\"Модель генерации вернула ошибку\"}}"}
+[Аксессуары/1] nmId=16020837 wb=Броши → ОШИБКА: Error: /gen 502: {"ok":false,"status":502,"body":"{\"error\":{\"code\":\"model_error\",\"message\":\"Модель генерации вернула ошибку\"}}"}
