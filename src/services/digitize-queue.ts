@@ -26,6 +26,7 @@ import { ОшибкаОцифровки, digitizeAuto, itemsNeedingDigitization,
 import { TidyApiError } from './tidy-api'
 import {
   QUEUE_ID,
+  clearQueue,
   loadQueue,
   saveQueue,
   type ЗадачаОчереди,
@@ -170,6 +171,12 @@ export class DigitizeQueue {
   readonly #retryDelayMs: number
   readonly #sleep: (ms: number) => Promise<void>
   readonly #listeners = new Set<(progress: QueueProgress) => void>()
+  /**
+   * Подписка на успешную оцифровку вещи. Нужна сетке: она читает данные один
+   * раз при монтировании, поэтому после очереди обязана перечитать изображения
+   * и показать свежие вырезы/AI-версии (остаточный риск 5 финального ревью).
+   */
+  readonly #digitizedListeners = new Set<(itemId: string) => void>()
 
   #state: СостояниеОчереди | null = null
   #running = false
@@ -189,6 +196,18 @@ export class DigitizeQueue {
     listener(this.progress)
     return () => {
       this.#listeners.delete(listener)
+    }
+  }
+
+  /**
+   * Подписка на успешную оцифровку одной вещи. Событие летит до конца прохода,
+   * чтобы сетка могла тихо перечитать изображения, не показывая скелетон.
+   * Возвращает функцию отписки.
+   */
+  onDigitized(listener: (itemId: string) => void): () => void {
+    this.#digitizedListeners.add(listener)
+    return () => {
+      this.#digitizedListeners.delete(listener)
     }
   }
 
@@ -238,6 +257,9 @@ export class DigitizeQueue {
     const план = await itemsNeedingDigitization()
     const state = createState(план, nowIso())
     if (state.задачи.length === 0) {
+      // Оцифровывать нечего: старая сохранённая очередь больше не нужна
+      // (удалённые/уже оцифрованные вещи висели бы в ней мусором).
+      await clearQueue().catch(() => undefined)
       this.#state = { ...state, статус: 'завершена' }
       this.#emit()
       return
@@ -344,6 +366,7 @@ export class DigitizeQueue {
         task.датаОбновления = nowIso()
         await saveQueue(state)
         this.#emit()
+        for (const listener of this.#digitizedListeners) listener(task.idВещи)
         return
       } catch (error) {
         const failure = describeFailure(error)

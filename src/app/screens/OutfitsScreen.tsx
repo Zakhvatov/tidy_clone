@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import type { Изображение, Образ, Season, Вещь } from '../../domain/types'
+import { удалитьФон } from '../../services/outfit-background'
 import { renderOutfitCover } from '../../services/outfit-render'
 import { loadWardrobe, preferredImage, type WardrobeEntry } from '../../services/wardrobe'
 import {
@@ -228,6 +229,9 @@ export function OutfitsScreen() {
     setОшибка(null)
     try {
       await удалитьОбраз(образ.id)
+      // Подложка живёт в localStorage, а не в самом Образе, поэтому ключ надо
+      // удалить вручную — иначе он останется навсегда (утечка из ревью).
+      удалитьФон(образ.id)
       setОбразы((текущие) => текущие.filter((текущий) => текущий.id !== образ.id))
     } catch {
       setОшибка(ОШИБКА_УДАЛЕНИЯ)

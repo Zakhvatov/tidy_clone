@@ -10,12 +10,15 @@ import { DB_NAME, closeDb } from '../../storage/db'
 import * as images from '../../storage/images'
 import * as items from '../../storage/items'
 import * as outfits from '../../storage/outfits'
+import { digitizeItem } from '../../services/digitize'
 import { AppRoutes } from '../App'
-import { digitizeItem } from './digitizeBridge'
 
 // Воркер/сервис оцифровки в тестах карточки заменяется моком: проверяем саму
 // карточку, а не генерацию (её тесты живут в T10).
-vi.mock('./digitizeBridge', () => ({ digitizeItem: vi.fn() }))
+vi.mock('../../services/digitize', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/digitize')>()
+  return { ...actual, digitizeItem: vi.fn() }
+})
 
 const mockedDigitize = vi.mocked(digitizeItem)
 
@@ -274,9 +277,10 @@ describe('Карточка вещи (T15)', () => {
       makeImage('о-1', 'вещь-1', 'оригинал', '2024-03-05T10:00:00.000Z', 'orig'),
     )
     mockedDigitize.mockImplementation(async (idВещи) => {
-      await images.addAiVersion(
+      const image = await images.addAiVersion(
         makeImage('а-1', idВещи, 'ai', '2024-03-06T10:00:00.000Z', 'ai'),
       )
+      return { itemId: idВещи, way: 'ai', status: 'создано', image }
     })
 
     renderItem('вещь-1')
@@ -301,9 +305,10 @@ describe('Карточка вещи (T15)', () => {
       makeImage('а-старая', 'вещь-1', 'ai', '2024-03-06T10:00:00.000Z', 'ai-old'),
     )
     mockedDigitize.mockImplementation(async (idВещи: string) => {
-      await images.addAiVersion(
+      const image = await images.addAiVersion(
         makeImage('а-новая', idВещи, 'ai', '2024-03-07T10:00:00.000Z', 'ai-new'),
       )
+      return { itemId: idВещи, way: 'ai', status: 'создано', image }
     })
 
     renderItem('вещь-1')

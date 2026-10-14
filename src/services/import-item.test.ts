@@ -4,6 +4,7 @@ import { FALLBACK_SUB, FALLBACK_TOP } from '../domain/taxonomy'
 import type { PhotoAnalyzer } from './wb/packshot'
 import {
   MAX_ORIGINAL_BYTES,
+  PHOTO_TIMEOUT_MS,
   ОшибкаИмпортаВещи,
   createDraftFromLink,
   createDraftFromPhoto,
@@ -209,6 +210,50 @@ describe('import-item: сеть и сборка домена', () => {
         (async () => new Response(new Uint8Array(0))) as unknown as typeof fetch,
       ),
     ).rejects.toMatchObject({ code: 'photo' })
+  })
+
+  it('fetchPhotoBlob обрывает подвисшее соединение по таймауту, а не висит вечно', async () => {
+    vi.useFakeTimers()
+    try {
+      // Запрос, который сам никогда не ответит: реагирует только на отмену.
+      const висящий = ((_url: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('отменено', 'AbortError')),
+          )
+        })) as unknown as typeof fetch
+
+      const promise = fetchPhotoBlob('https://x/1.webp', висящий).catch(
+        (error: unknown) => error,
+      )
+      await vi.advanceTimersByTimeAsync(PHOTO_TIMEOUT_MS)
+      const error = await promise
+
+      expect(error).toBeInstanceOf(ОшибкаИмпортаВещи)
+      expect((error as ОшибкаИмпортаВещи).code).toBe('network')
+      expect((error as Error).message).toContain('вовремя')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('fetchPhotoBlob отменяется внешним AbortSignal (уход с экрана)', async () => {
+    const controller = new AbortController()
+    const висящий = ((_url: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('отменено', 'AbortError')),
+        )
+      })) as unknown as typeof fetch
+
+    const promise = fetchPhotoBlob('https://x/1.webp', висящий, controller.signal).catch(
+      (error: unknown) => error,
+    )
+    controller.abort()
+    const error = await promise
+
+    expect(error).toBeInstanceOf(ОшибкаИмпортаВещи)
+    expect((error as ОшибкаИмпортаВещи).code).toBe('network')
   })
 
   it('без canvas размеры честно неизвестны (нули), а не выдуманы', async () => {

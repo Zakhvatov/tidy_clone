@@ -30,6 +30,13 @@ import type { WbCard } from './wb/types'
  */
 export const MAX_ORIGINAL_BYTES = 30 * 1024 * 1024
 
+/**
+ * Таймаут скачивания одного фото, ~10 с (как у карточки WB в `wb/card.ts`).
+ * Без него подвисшее соединение оставляло бы экран добавления в «Загружаем вещь…»
+ * навечно.
+ */
+export const PHOTO_TIMEOUT_MS = 10_000
+
 /** Причина, по которой вещь не удалось подготовить. */
 export type ImportErrorCode =
   | 'link'
@@ -84,6 +91,11 @@ export interface ImportOptions {
   classify?: (blob: Blob) => Promise<PhotoClassification>
   /** Измерение размеров изображения — по умолчанию `measureImage`. */
   measure?: (blob: Blob) => Promise<{ ширина: number; высота: number }>
+  /**
+   * Отмена извне — например, уход с экрана добавления. Прокидывается в
+   * скачивание фото (`fetchPhotoBlob`) и в классификацию фото (`classifyPhoto`).
+   */
+  signal?: AbortSignal
 }
 
 // ---------------------------------------------------------------------------
@@ -135,17 +147,50 @@ function assertOriginalSize(blob: Blob): void {
   }
 }
 
-/** Скачивает фото товара как Blob будущего Оригинала. */
-export async function fetchPhotoBlob(url: string, fetchImpl: typeof fetch = fetch): Promise<Blob> {
+/**
+ * Скачивает фото товара как Blob будущего Оригинала.
+ *
+ * Таймаут (~10 с) и внешний `signal` объединяются в один `AbortController`:
+ * подвисшее соединение обрывается с понятным русским текстом, а уход с экрана
+ * действительно прекращает загрузку. Приоритет ошибок: отмена → таймаут → сеть.
+ */
+export async function fetchPhotoBlob(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, PHOTO_TIMEOUT_MS)
+  const forwardAbort = () => controller.abort()
+  signal?.addEventListener('abort', forwardAbort, { once: true })
+  if (signal?.aborted) controller.abort()
+
   let response: Response
   try {
-    response = await fetchImpl(url)
+    response = await fetchImpl(url, { signal: controller.signal })
   } catch (cause) {
+    if (signal?.aborted) {
+      throw new ОшибкаИмпортаВещи('network', 'Загрузка фото отменена', { cause })
+    }
+    if (timedOut) {
+      throw new ОшибкаИмпортаВещи(
+        'network',
+        'Wildberries не отдал фото вовремя. Проверьте соединение и попробуйте снова',
+        { cause },
+      )
+    }
     throw new ОшибкаИмпортаВещи(
       'network',
       'Не удалось загрузить фото товара. Проверьте соединение и попробуйте снова',
       { cause },
     )
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', forwardAbort)
   }
   if (!response.ok) {
     throw new ОшибкаИмпортаВещи('photo', `Не удалось загрузить фото товара (код ${response.status})`)
@@ -266,7 +311,7 @@ export async function createDraftFromLink(
   const loadBlob = async (url: string): Promise<Blob> => {
     const cached = cache.get(url)
     if (cached !== undefined) return cached
-    const blob = await fetchPhotoBlob(url, fetchImpl)
+    const blob = await fetchPhotoBlob(url, fetchImpl, options.signal)
     cache.set(url, blob)
     return blob
   }
@@ -315,7 +360,7 @@ export async function createDraftFromPhoto(
   options: ImportOptions = {},
 ): Promise<ItemDraft> {
   const measure = options.measure ?? measureImage
-  const classify = options.classify ?? ((blob: Blob) => classifyPhoto(blob))
+  const classify = options.classify ?? ((blob: Blob) => classifyPhoto(blob, { signal: options.signal }))
 
   if (file.type !== '' && !file.type.startsWith('image/')) {
     throw new ОшибкаИмпортаВещи('photo', 'Это не изображение. Выберите фото вещи')

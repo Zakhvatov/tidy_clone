@@ -9,7 +9,7 @@ import { get as получитьВещь, remove as удалитьВещь, upda
 import { CategoryPicker } from '../../ui/CategoryPicker'
 import { ErrorNotice } from '../../ui/ErrorNotice'
 import { useObjectUrl } from '../../ui/useObjectUrl'
-import { digitizeItem } from './digitizeBridge'
+import { digitizeItem } from '../../services/digitize'
 import screenStyles from './Screen.module.css'
 import styles from './ItemScreen.module.css'
 
@@ -107,8 +107,8 @@ function СтрокаАтрибута({ label, value }: { label: string; value: 
  * Переключатель показывается, только если есть что переключать: без AI-версии
  * и без выреза остаётся один оригинал без кнопок.
  *
- * Генерация запускается **только нажатием** и идёт через `digitizeBridge` —
- * единственную точку стыковки с сервисом оцифровки T10.
+ * Генерация запускается **только нажатием** и идёт напрямую в сервис оцифровки
+ * (`src/services/digitize.ts`, T10) — без промежуточной прослойки.
  */
 export function ItemScreen() {
   const { id } = useParams<{ id: string }>()

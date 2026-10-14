@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { deleteDB } from 'idb'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +18,25 @@ import { AppRoutes } from '../App'
 vi.mock('../../services/wardrobe', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/wardrobe')>()
   return { ...actual, loadWardrobe: vi.fn(actual.loadWardrobe) }
+})
+
+// Очередь оцифровки в тесте стейла подменяет саму оцифровку: она должна создать
+// вырез в хранилище, а проверяем мы, что сетка перечитает изображения.
+const digitizeHook = vi.hoisted(() => ({ добавить: null as null | (() => Promise<void>) }))
+vi.mock('../../services/digitize', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/digitize')>()
+  return {
+    ...actual,
+    digitizeAuto: vi.fn(async (itemId: string) => {
+      await digitizeHook.добавить?.()
+      return {
+        itemId,
+        way: 'вырез' as const,
+        status: 'создано' as const,
+        image: undefined as unknown as Изображение,
+      }
+    }),
+  }
 })
 
 function makeItem(overrides: Partial<Вещь> = {}): Вещь {
@@ -216,6 +235,33 @@ describe('Экран гардероба (T13)', () => {
     ).toBeInTheDocument()
   })
 
+  it('после оцифровки сетка перечитывает данные и показывает новый вырез, а не прежний оригинал', async () => {
+    await items.create(
+      makeItem({ id: 'вещь-1', название: 'Пакшот', категория: 'Обувь', подкатегория: 'кроссовки' }),
+    )
+    await images.addOriginal(
+      makeImage('о-1', 'вещь-1', 'оригинал', '2024-01-01T00:00:00.000Z', 'orig'),
+    )
+
+    renderWardrobe()
+    expect(await screen.findByAltText('Пакшот')).toHaveAttribute('src', 'blob:orig')
+
+    // Мок оцифровки кладёт в хранилище точный вырез, пока идёт очередь.
+    digitizeHook.добавить = async () => {
+      await images.addCutout(
+        makeImage('в-1', 'вещь-1', 'вырез', '2024-01-02T00:00:00.000Z', 'cut'),
+      )
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: 'Оцифровать всё, где нет пакшота' }))
+
+    // Сетка читает данные один раз при монтировании, но событие очереди
+    // заставляет её перечитать и показать свежий вырез.
+    await waitFor(() =>
+      expect(screen.getByAltText('Пакшот')).toHaveAttribute('src', 'blob:cut'),
+    )
+  })
+
   it('вещь с AI-версией показывает AI, без неё — Оригинал (подставлен нужный blob)', async () => {
     await items.create(
       makeItem({ id: 'вещь-ai', название: 'С AI', категория: 'Обувь', подкатегория: 'кроссовки' }),
@@ -238,6 +284,26 @@ describe('Экран гардероба (T13)', () => {
 
     expect(await screen.findByAltText('С AI')).toHaveAttribute('src', 'blob:ai')
     expect(screen.getByAltText('Только оригинал')).toHaveAttribute('src', 'blob:orig')
+  })
+
+  it('пакшот с вырезом и без AI: в сетке показывается вырез (D9)', async () => {
+    await items.create(
+      makeItem({ id: 'вещь-вырез', название: 'Пакшот', категория: 'Обувь', подкатегория: 'кроссовки' }),
+    )
+    await items.create(
+      makeItem({ id: 'вещь-ai', название: 'С AI и вырезом', категория: 'Обувь', подкатегория: 'ботинки' }),
+    )
+    await images.addOriginal(makeImage('и-1', 'вещь-вырез', 'оригинал', '2024-01-01T00:00:00.000Z', 'orig-cut'))
+    await images.addCutout(makeImage('и-2', 'вещь-вырез', 'вырез', '2024-01-02T00:00:00.000Z', 'cut'))
+    await images.addOriginal(makeImage('и-3', 'вещь-ai', 'оригинал', '2024-01-03T00:00:00.000Z', 'orig-both'))
+    await images.addCutout(makeImage('и-4', 'вещь-ai', 'вырез', '2024-01-04T00:00:00.000Z', 'cut-both'))
+    await images.addAiVersion(makeImage('и-5', 'вещь-ai', 'ai', '2024-01-05T00:00:00.000Z', 'ai-both'))
+
+    renderWardrobe()
+
+    // Вырез подставляется только тогда, когда AI-версии нет.
+    expect(await screen.findByAltText('Пакшот')).toHaveAttribute('src', 'blob:cut')
+    expect(screen.getByAltText('С AI и вырезом')).toHaveAttribute('src', 'blob:ai-both')
   })
 
   it('в сетке нет слова «AI» и пометок об AI', async () => {

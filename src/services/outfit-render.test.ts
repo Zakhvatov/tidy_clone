@@ -208,4 +208,43 @@ describe('Рендер коллажа на canvas (T16)', () => {
     const [первый, второй] = drawImage.mock.calls
     expect(первый?.[2]).toBeLessThan(второй?.[2] as number)
   })
+
+  it('для пакшота без AI-версии в коллаж идёт вырез, а не оригинал (D9)', async () => {
+    const drawImage = vi.fn()
+    const toBlob = vi.fn((callback: BlobCallback) => callback(new Blob(['png'], { type: 'image/png' })))
+    const контекст = { fillStyle: '', fillRect: vi.fn(), drawImage }
+    const холст = { width: 0, height: 0, getContext: () => контекст, toBlob }
+    vi.spyOn(document, 'createElement').mockReturnValue(холст as unknown as HTMLElement)
+
+    const оригинал = {
+      ...изображение('и-ориг', 'вещь-1'),
+      blob: new Blob(['original-bytes'], { type: 'image/png' }),
+    }
+    const вырез = {
+      ...изображение('и-вырез', 'вещь-1'),
+      роль: 'вырез' as const,
+      blob: new Blob(['cutout-bytes'], { type: 'image/png' }),
+    }
+    const загрузки = vi.fn(async (blob: Blob) => {
+      void blob
+      return { width: 100, height: 100, close: vi.fn() }
+    })
+    vi.stubGlobal('createImageBitmap', загрузки)
+
+    const образ: Образ = {
+      id: 'образ-вырез',
+      название: 'Вырез',
+      сезон: 'лето',
+      элементы: [{ idВещи: 'вещь-1', позиция: { x: 500, y: 625 }, масштаб: 1, zПорядок: 0 }],
+      датаСоздания: '2024-01-01T00:00:00.000Z',
+    }
+
+    await renderOutfit(образ, [вещь('вещь-1')], [оригинал, вырез])
+
+    // В коллаж попал именно вырез — первый и единственный вызов создания bitmap.
+    expect(загрузки).toHaveBeenCalledTimes(1)
+    const источник = загрузки.mock.calls[0]?.[0]
+    // В коллаж попал именно вырез — тот самый Blob, а не Оригинал.
+    expect(источник).toBe(вырез.blob)
+  })
 })

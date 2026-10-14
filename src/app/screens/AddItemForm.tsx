@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   ОшибкаИмпортаВещи,
@@ -58,12 +58,32 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
   const [фаза, setФаза] = useState<Phase>('idle')
   const [ошибка, setОшибка] = useState<string | null>(null)
   const retryRef = useRef<(() => void) | null>(null)
+  const controllerRef = useRef<AbortController | null>(null)
+  const mountedRef = useRef(true)
   const online = useOnline()
+
+  // Уход с экрана действительно прекращает загрузку: без этого подвисшее
+  // соединение продолжало бы тянуть фото в никуда после размонтирования.
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      controllerRef.current?.abort()
+    }
+  }, [])
 
   const busy = фаза === 'loading' || фаза === 'saving'
 
   function повторить() {
     retryRef.current?.()
+  }
+
+  /** Начинает новую загрузку, отменяя предыдущую незавершённую. */
+  function начатьЗагрузку(): AbortController {
+    controllerRef.current?.abort()
+    const controller = new AbortController()
+    controllerRef.current = controller
+    return controller
   }
 
   async function загрузитьПоСсылке() {
@@ -73,11 +93,15 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
     retryRef.current = () => {
       void загрузитьПоСсылке()
     }
+    const controller = начатьЗагрузку()
     try {
-      const draft = await createDraftFromLink(ссылка)
+      const draft = await createDraftFromLink(ссылка, { signal: controller.signal })
+      if (controller.signal.aborted || !mountedRef.current) return
       setЧерновик(draft)
       setФаза('ready')
     } catch (error) {
+      // Отмена (уход с экрана или новая попытка) — не показываем как ошибку.
+      if (controller.signal.aborted || !mountedRef.current) return
       setОшибка(сообщениеОбОшибке(error))
       setФаза('idle')
     }
@@ -90,11 +114,14 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
     retryRef.current = () => {
       void загрузитьПоФото(file)
     }
+    const controller = начатьЗагрузку()
     try {
-      const draft = await createDraftFromPhoto(file)
+      const draft = await createDraftFromPhoto(file, { signal: controller.signal })
+      if (controller.signal.aborted || !mountedRef.current) return
       setЧерновик(draft)
       setФаза('ready')
     } catch (error) {
+      if (controller.signal.aborted || !mountedRef.current) return
       setОшибка(сообщениеОбОшибке(error))
       setФаза('idle')
     }
@@ -104,6 +131,11 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
     if (черновик === null) return
     setОшибка(null)
     setФаза('saving')
+    // «Повторить» после ошибки сохранения повторяет именно запись, а не тянет
+    // ссылку/фото заново: данные уже загружены и лежат в черновике.
+    retryRef.current = () => {
+      void сохранить()
+    }
     const { вещь, оригинал } = собратьВещь(черновик)
     try {
       await items.create(вещь)
@@ -116,6 +148,7 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
       }
       onSaved()
     } catch (error) {
+      if (!mountedRef.current) return
       setОшибка(сообщениеОбОшибке(error))
       setФаза('ready')
     }

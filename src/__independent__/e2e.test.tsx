@@ -334,13 +334,13 @@ describe('НЕЗАВИСИМО: сквозной путь ссылка/фото 
     expect(await outfits.list()).toHaveLength(1)
     expect((await outfits.get('образ-1'))?.элементы).toHaveLength(5)
 
-    // Правило сетки: AI важнее оригинала; вырез в сетку не подставляется.
+    // Правило сетки (D9): AI важнее выреза; вырез важнее оригинала.
     const поВещи = new Map(записи.map((entry) => [entry.вещь.id, entry]))
     for (const { вещь } of [B, C, D, E]) {
       const entry = поВещи.get(вещь.id)
       expect(preferredImage(вещь, entry?.изображения ?? [])?.роль).toBe('ai')
     }
-    expect(preferredImage(A.вещь, поВещи.get(A.вещь.id)?.изображения ?? [])?.роль).toBe('оригинал')
+    expect(preferredImage(A.вещь, поВещи.get(A.вещь.id)?.изображения ?? [])?.роль).toBe('вырез')
 
     // Секции ADR-0004 собираются и не теряют вещи.
     const секции = groupByTopCategory(записи)
@@ -709,15 +709,17 @@ describe('НЕЗАВИСИМО: проверка evidence-заявлений', (
     expect((await db2.get('outfits', 'v1-образ'))?.элементы).toHaveLength(1)
   })
 
-  it('preferredImage: AI важнее оригинала, вырез игнорируется, из AI — самая новая', () => {
+  it('preferredImage: AI важнее выреза, вырез важнее оригинала, из AI — самая новая', () => {
     const вещь = makeItem({ id: 'в' })
     const оригинал = makeImage('о', 'в', 'оригинал', 'o', iso(0))
     const aiСтарая = makeImage('а1', 'в', 'ai', 'a1', iso(1))
     const aiНовая = makeImage('а2', 'в', 'ai', 'a2', iso(2))
     const вырез = makeImage('в1', 'в', 'вырез', 'c', iso(3))
 
-    expect(preferredImage(вещь, [оригинал, вырез])?.роль).toBe('оригинал')
+    // Вырез пакшота виден в сетке и коллаже, когда AI-версии ещё нет.
+    expect(preferredImage(вещь, [оригинал, вырез])?.роль).toBe('вырез')
     expect(preferredImage(вещь, [оригинал, aiСтарая, aiНовая, вырез])?.id).toBe('а2')
+    expect(preferredImage(вещь, [оригинал])?.роль).toBe('оригинал')
     expect(preferredImage(вещь, [])).toBeUndefined()
     // Чужое изображение не подставляется.
     expect(preferredImage(вещь, [makeImage('ч', 'другая', 'ai', 'x')])).toBeUndefined()

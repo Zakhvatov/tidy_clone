@@ -6,9 +6,17 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DB_NAME, closeDb } from '../../storage/db'
+import { ОшибкаХранилища } from '../../storage/errors'
 import * as images from '../../storage/images'
 import * as items from '../../storage/items'
 import { AppRoutes } from '../App'
+
+// `create` — наблюдаемый мок: тесту повтора нужно один раз отклонить запись,
+// остальные тесты работают с настоящей реализацией.
+vi.mock('../../storage/items', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../storage/items')>()
+  return { ...actual, create: vi.fn(actual.create) }
+})
 
 /** Фикстура карточки WB: поля повторяют `info/ru/card.json`. */
 interface CardFixture {
@@ -231,6 +239,27 @@ describe('Экран добавления вещи (T8)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Это не похоже на ссылку Wildberries')
     expect(screen.queryByRole('button', { name: 'Добавить в гардероб' })).toBeNull()
     expect(await items.count()).toBe(0)
+  })
+
+  it('при ошибке сохранения «Повторить» повторяет именно сохранение, а не загрузку', async () => {
+    const fetchMock = makeFetch({})
+    vi.stubGlobal('fetch', fetchMock)
+    renderAdd()
+
+    await вставитьСсылку('https://www.wildberries.ru/catalog/16020837/detail.aspx', 'Худи тестовое')
+
+    vi.mocked(items.create).mockRejectedValueOnce(new ОшибкаХранилища('диск занят'))
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('диск занят')
+    const запросовПослеОшибки = vi.mocked(fetchMock).mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
+
+    expect(await screen.findByRole('heading', { name: 'Гардероб' })).toBeInTheDocument()
+    // Ссылка и фото повторно не тянулись: повтор — это именно сохранение.
+    expect(vi.mocked(fetchMock).mock.calls.length).toBe(запросовПослеОшибки)
+    expect(await items.count()).toBe(1)
   })
 
   it('повторное добавление не ломает уже сохранённые вещи', async () => {

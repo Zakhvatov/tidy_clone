@@ -124,6 +124,43 @@ describe('Очередь оцифровки (T12)', () => {
     expect(persisted?.задачи).toHaveLength(20)
   })
 
+  it('когда оцифровывать нечего, повторный запуск очищает сохранённую очередь', async () => {
+    await seed(2)
+    const queue = new DigitizeQueue(queueOptions({ generate: async () => aiBlob(), id: idFactory('ai') }))
+    await queue.start()
+    expect(await loadQueue()).toBeDefined()
+
+    await queue.start()
+
+    expect(queue.progress.статус).toBe('завершена')
+    expect(queue.progress.всего).toBe(0)
+    // Старая очередь из хранилища убрана — продолжать больше нечего.
+    expect(await loadQueue()).toBeUndefined()
+  })
+
+  it('событие onDigitized летит после каждой успешной оцифровки', async () => {
+    await seed(3)
+    const queue = new DigitizeQueue(queueOptions({ generate: async () => aiBlob(), id: idFactory('ai') }))
+    const событие = vi.fn()
+    queue.onDigitized(событие)
+
+    await queue.start()
+
+    expect(событие).toHaveBeenCalledTimes(3)
+    expect(new Set(событие.mock.calls.map(([id]) => id))).toEqual(
+      new Set(['вещь-1', 'вещь-2', 'вещь-3']),
+    )
+
+    // Отписанный слушатель больше не получает событий.
+    await items.create(makeItem({ id: 'вещь-4', название: 'Вещь 4' }))
+    await images.addOriginal(makeImage('ор-4', 'вещь-4', 'оригинал'))
+    const queue2 = new DigitizeQueue(queueOptions({ generate: async () => aiBlob(), id: idFactory('b') }))
+    const событие2 = vi.fn()
+    queue2.onDigitized(событие2)()
+    await queue2.start()
+    expect(событие2).not.toHaveBeenCalled()
+  })
+
   it('сбой одной вещи не рушит остальные', async () => {
     await seed(5)
     const generate = vi.fn(async (вещь: Вещь) => {

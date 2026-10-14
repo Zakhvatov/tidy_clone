@@ -222,6 +222,21 @@ describe('Список образов (T18)', () => {
     expect(await items.get('в-1')).toBeDefined()
   })
 
+  it('удаление образа убирает его подложку из localStorage', async () => {
+    await outfits.create(makeOutfit({ id: 'образ-1', название: 'Осенний' }))
+    localStorage.setItem('tidy.outfit.background.образ-1', '#EDEDEA')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderOutfits()
+    await screen.findByRole('list')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить Осенний' }))
+
+    await waitFor(() => {
+      expect(localStorage.getItem('tidy.outfit.background.образ-1')).toBeNull()
+    })
+  })
+
   it('отмена подтверждения оставляет образ на месте', async () => {
     await outfits.create(makeOutfit({ id: 'образ-1', название: 'Осенний' }))
     vi.spyOn(window, 'confirm').mockReturnValue(false)
