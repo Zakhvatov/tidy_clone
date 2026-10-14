@@ -19,6 +19,7 @@ import {
 import { ErrorNotice } from '../../ui/ErrorNotice'
 import { DigitizePanel } from '../../ui/DigitizePanel'
 import { ItemImage } from '../../ui/ItemImage'
+import { AddItemForm } from './AddItemForm'
 import screenStyles from './Screen.module.css'
 import styles from './WardrobeScreen.module.css'
 
@@ -287,16 +288,13 @@ export function WardrobeScreen() {
         <ErrorNotice message={ошибка ?? ТЕКСТ_ОШИБКИ} onRetry={повторить} />
       )}
 
+      {/* O7: при пустом гардеробе первый экран — сама форма добавления, а не
+          ссылка на отдельный /add. После сохранения перечитываем гардероб, и
+          место формы занимает сетка (T13). */}
       {состояние === 'готово' && записи.length === 0 && (
-        <div className={styles.empty}>
+        <div className={styles.onboarding}>
           <p className={screenStyles.placeholderText}>Гардероб пуст</p>
-          <button
-            className={`${screenStyles.button} ${styles.emptyButton}`}
-            type="button"
-            onClick={() => navigate('/add')}
-          >
-            Добавить вещь
-          </button>
+          <AddItemForm onSaved={повторить} />
         </div>
       )}
 

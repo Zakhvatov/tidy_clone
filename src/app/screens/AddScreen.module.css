@@ -101,7 +101,8 @@
 .skeletonLine {
   border-radius: var(--radius-chip);
   background: var(--color-surface);
-  animation: pulse 1.2s ease-in-out infinite;
+  /* ADR-0005: однократное появление 200 ms ease-out вместо бесконечной пульсации. */
+  animation: skeleton-in var(--motion-base) var(--motion-ease);
 }
 
 .skeletonImage {
@@ -124,7 +125,7 @@
   height: 16px;
   border-radius: var(--radius-chip);
   background: var(--color-surface);
-  animation: pulse 1.2s ease-in-out infinite;
+  animation: skeleton-in var(--motion-base) var(--motion-ease);
 }
 
 .loadingText {
@@ -134,13 +135,12 @@
   text-align: center;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 1;
+@keyframes skeleton-in {
+  from {
+    opacity: 0;
   }
-  50% {
-    opacity: 0.55;
+  to {
+    opacity: 1;
   }
 }
 

@@ -204,22 +204,12 @@
   font-size: 13px;
 }
 
-.empty {
+/* Пустой гардероб = форма добавления (O7): тот же белый фон и тот же ритм
+   отступов, что на экране /add, — без лишней карточки-обёртки вокруг формы. */
+.onboarding {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  min-height: 240px;
-  padding: var(--space-edge);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-card);
-  background: var(--color-surface);
-}
-
-.emptyButton {
-  width: auto;
-  padding: 14px 24px;
+  gap: var(--space-section);
 }
 
 .skeleton {
@@ -245,15 +235,16 @@
   aspect-ratio: 3 / 4;
   border-radius: var(--radius-card);
   background: var(--color-surface);
-  animation: pulse var(--motion-base) var(--motion-ease) infinite alternate;
+  /* ADR-0005: однократное появление 200 ms ease-out вместо бесконечной пульсации. */
+  animation: skeleton-in var(--motion-base) var(--motion-ease);
 }
 
-@keyframes pulse {
+@keyframes skeleton-in {
   from {
-    opacity: 1;
+    opacity: 0;
   }
   to {
-    opacity: 0.55;
+    opacity: 1;
   }
 }
 

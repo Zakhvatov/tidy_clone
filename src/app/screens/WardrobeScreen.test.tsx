@@ -51,6 +51,49 @@ function makeImage(
   return { id, idВещи, роль, blob, ширина: 512, высота: 512, mime: 'image/png', датаСоздания }
 }
 
+/** Canvas-заглушка: `getContext` не реализован в jsdom, анализ честно падает. */
+class FakeOffscreenCanvas {
+  constructor(
+    readonly width: number,
+    readonly height: number,
+  ) {}
+
+  getContext(): null {
+    return null
+  }
+}
+
+/** Минимальная сеть для онбординга: карточка WB и одно фото. */
+function onboardingFetch(): typeof fetch {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    if (url.endsWith('/info/ru/card.json')) {
+      return json({
+        nm_id: 16020837,
+        imt_name: 'Худи тестовое',
+        subj_name: 'Худи',
+        subj_root_name: 'Одежда',
+        nm_colors_names: 'чёрный',
+        selling: { brand_name: 'Тестовый бренд' },
+        media: { photo_count: 1 },
+        options: [{ name: 'Состав', value: 'хлопок' }],
+      })
+    }
+    if (url.includes('/info/sellers.json')) return json({ supplierName: 'ООО Тест' })
+    if (url.includes('/images/big/')) {
+      return new Response(new Uint8Array([0x70, 0x68, 0x6f, 0x74, 0x6f]), {
+        headers: { 'content-type': 'image/webp' },
+      })
+    }
+    return new Response('not found', { status: 404 })
+  }) as unknown as typeof fetch
+}
+
 function renderWardrobe() {
   return render(
     <MemoryRouter initialEntries={['/']}>
@@ -100,18 +143,45 @@ describe('Экран гардероба (T13)', () => {
   })
 
   afterEach(async () => {
+    vi.unstubAllGlobals()
     await closeDb()
     await deleteDB(DB_NAME)
   })
 
-  it('пустой гардероб: пустое состояние и кнопка «Добавить вещь» ведёт на /add', async () => {
+  it('пустой гардероб: на / сама форма добавления (O7), добавление кладёт вещь в сетку', async () => {
+    vi.stubGlobal('fetch', onboardingFetch())
+    // Canvas в jsdom недоступен: анализ пакшота просто не срабатывает, без шума.
+    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas)
     renderWardrobe()
 
     expect(await screen.findByText('Гардероб пуст')).toBeInTheDocument()
+    // O7: поле ссылки и кнопка — прямо на первом экране, без перехода на /add.
     expect(screen.queryByRole('region')).toBeNull()
+    const ссылка = await screen.findByLabelText('Ссылка на товар')
+    const кнопка = screen.getByRole('button', { name: 'Найти вещь' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Добавить вещь' }))
-    expect(await screen.findByRole('heading', { name: 'Добавить вещь' })).toBeInTheDocument()
+    fireEvent.change(ссылка, {
+      target: { value: 'https://www.wildberries.ru/catalog/16020837/detail.aspx' },
+    })
+    fireEvent.click(кнопка)
+    expect(await screen.findByRole('heading', { name: 'Худи тестовое' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
+
+    expect(await screen.findByRole('region', { name: 'Второй слой' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Худи тестовое' })).toBeInTheDocument()
+    // Сетка заменила форму: поля ссылки на первом экране больше нет.
+    expect(screen.queryByLabelText('Ссылка на товар')).toBeNull()
+  })
+
+  it('непустой гардероб: на / нет поля ссылки, есть сетка', async () => {
+    await items.create(
+      makeItem({ id: 'вещь-1', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
+    )
+    renderWardrobe()
+
+    expect(await screen.findByRole('region', { name: 'Второй слой' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Ссылка на товар')).toBeNull()
   })
 
   it('50 вещей: 8+1 секция, счётчики и порядок секций по ADR-0004', async () => {
