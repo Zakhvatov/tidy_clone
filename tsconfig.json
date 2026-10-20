@@ -20,7 +20,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
 
-    "types": ["vite/client", "vite-plugin-pwa/client"]
+    "types": ["vite/client", "vite-plugin-pwa/client", "node"]
   },
   "include": ["src", "vite.config.ts", "vitest.setup.ts"]
 }
