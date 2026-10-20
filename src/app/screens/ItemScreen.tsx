@@ -6,12 +6,15 @@ import { ПАЛИТРА_ЦВЕТОВ, СЕЗОНЫ } from '../../services/wardro
 import { ОшибкаВещьВОбразе } from '../../storage/errors'
 import { listByItem } from '../../storage/images'
 import { get as получитьВещь, remove as удалитьВещь, update as обновитьВещь } from '../../storage/items'
+import { loadJob, type ЗадачаГенерации } from '../../storage/jobs'
 import { CategoryPicker } from '../../ui/CategoryPicker'
 import { ErrorNotice } from '../../ui/ErrorNotice'
 import { GenerationModelPicker } from '../../ui/GenerationModelPicker'
+import { GenerationStatus } from '../../ui/GenerationStatus'
 import { useGenerationModels } from '../../ui/useGenerationModels'
 import { useObjectUrl } from '../../ui/useObjectUrl'
 import { digitizeItem } from '../../services/digitize'
+import { ОшибкаГенерации, activeGenerationRun } from '../../services/generation'
 import screenStyles from './Screen.module.css'
 import styles from './ItemScreen.module.css'
 
@@ -124,6 +127,9 @@ export function ItemScreen() {
   const [выбраннаяРоль, setВыбраннаяРоль] = useState<ImageRole>('оригинал')
   const [ошибка, setОшибка] = useState<string | null>(null)
   const [генерация, setГенерация] = useState(false)
+  // Задача генерации (ADR-0006): переживает закрытие вкладки, поэтому читается
+  // из IndexedDB при открытии карточки и живёт до успеха или явного отказа.
+  const [задача, setЗадача] = useState<ЗадачаГенерации | null>(null)
   const [подтверждениеУдаления, setПодтверждениеУдаления] = useState(false)
   const [попытка, setПопытка] = useState(0)
 
@@ -149,9 +155,11 @@ export function ItemScreen() {
           return
         }
         const картинки = await listByItem(id)
+        const job = await loadJob(id)
         if (!активен) return
         setВещь(найденная)
         setИзображения(картинки)
+        setЗадача(job ?? null)
         // По решению «Какое изображение где» показываем AI-версию, если она есть.
         setВыбраннаяРоль(изображениеРоли(картинки, 'ai') === undefined ? 'оригинал' : 'ai')
         setСостояние('готово')
@@ -238,12 +246,19 @@ export function ItemScreen() {
       await digitizeItem(вещь.id, {
         force,
         model: выбраннаяМодель.slug,
+        onJobChange: (job) => setЗадача(job),
       })
       const картинки = await listByItem(вещь.id)
       setИзображения(картинки)
       setВыбраннаяРоль('ai')
+      setЗадача(null)
     } catch (error) {
-      setОшибка(текстОшибкиОцифровки(error))
+      if (error instanceof ОшибкаГенерации) {
+        // Статус-блок уже показывает судьбу задачи: «просрочена» или «не удалось».
+        // Для «просрочена» taskId жив — «Повторить» допросит ту же задачу.
+      } else {
+        setОшибка(текстОшибкиОцифровки(error))
+      }
     } finally {
       setГенерация(false)
     }
@@ -424,25 +439,40 @@ export function ItemScreen() {
             value={выбраннаяМодель.slug}
             onChange={выбратьМодель}
           />
-          <div className={styles.generateRow}>
-            <button
-              className={styles.generate}
-              type="button"
-              disabled={генерация}
-              onClick={() => {
-                // «Перегенерировать» (AI-версия уже есть) обязана генерировать
-                // заново; «Сделать AI-версию» — обычный идемпотентный запуск.
+          {задача !== null ? (
+            <GenerationStatus
+              job={задача}
+              модель={выбраннаяМодель.title}
+              цена={выбраннаяМодель.priceRub}
+              onRefresh={() => {
+                // Прогон идёт — будим опрос; вкладку закрывали — допрашиваем
+                // ту же задачу (taskId жив, повторная оплата не идёт).
+                const идущий = activeGenerationRun(задача.idВещи)
+                if (идущий !== undefined) идущий.refresh()
+                else void сделатьAiВерсию(ai !== undefined)
+              }}
+              onRetry={() => {
                 void сделатьAiВерсию(ai !== undefined)
               }}
-            >
-              {генерация
-                ? 'Готовим AI-версию…'
-                : ai === undefined
-                  ? 'Сделать AI-версию'
-                  : 'Перегенерировать'}
-            </button>
-            <span className={styles.generatePrice}>{выбраннаяМодель.priceRub} ₽ за кадр</span>
-          </div>
+            />
+          ) : (
+            <div className={styles.generateRow}>
+              <button
+                className={styles.generate}
+                type="button"
+                disabled={генерация}
+                onClick={() => {
+                  // «Перегенерировать» (AI-версия уже есть) обязана генерировать
+                  // заново; «Сделать AI-версию» — обычный идемпотентный запуск.
+                  void сделатьAiВерсию(ai !== undefined)
+                }}
+              >
+                {генерация
+                  ? 'Готовим AI-версию…'
+                  : `${ai === undefined ? 'Сделать AI-версию' : 'Перегенерировать'} · ${выбраннаяМодель.priceRub} ₽`}
+              </button>
+            </div>
+          )}
         </section>
 
         <section className={styles.section} aria-label="Удаление">

@@ -13,10 +13,18 @@
  * `/generate` вместе с redraw-промптом, поэтому AI-версия повторяет дизайн,
  * цвет и принты Оригинала, а не среднестатистическую вещь категории.
  *
- * Инвариант: **Оригинал не трогается никогда** — он только читается. Производные
- * изображения добавляются через `storage/images` (`add`), поэтому повторная
- * оцифровка не перезаписывает уже сохранённое, а проверка наличия роли делает
- * повторный запуск идемпотентным.
+ * С ADR-0006 генерация асинхронная: `digitizeItem` ставит задачу
+ * (`src/services/generation.ts` — `Idempotency-Key`, `taskId` в IndexedDB,
+ * опрос каждые ~3 с, сеанс 5 минут) и только потом сохраняет картинку. Пока
+ * задача живёт, её видно и правится с экрана статуса; закрытие вкладки её не
+ * теряет — см. «Забрать готовое» в очереди.
+ *
+ * Инвариант «Оригинал не трогается» действует до успешной генерации: он только
+ * читается. После успеха загруженный снимок-сырьё удаляется — сознательное
+ * исключение ADR-0006 §4 (только для `источник: 'фото'`; маркетплейсовые
+ * Оригиналы остаются). Производные изображения добавляются через
+ * `storage/images` (`add`), поэтому повторная оцифровка не перезаписывает уже
+ * сохранённое, а проверка наличия роли делает повторный запуск идемпотентным.
  *
  * Сеть и canvas внедряются через {@link DigitizeDeps}: тесты не ходят в воркер
  * и не требуют canvas, а очередь (T12) подставляет туда свой `AbortSignal`.
@@ -27,7 +35,8 @@ import type { ImageRole, Изображение, Вещь } from '../domain/type
 // атрибутов живут там, а не в сервисе — у промпта один источник истины.
 // С D13 оцифровка шлёт redraw-промпт: модель получает Оригинал референсом.
 import { buildRedrawPrompt } from '../domain/prompt-templates'
-import { generateImage, MAX_GENERATE_INPUT_BYTES } from './tidy-api'
+import { MAX_GENERATE_INPUT_BYTES } from './tidy-api'
+import { runGeneration } from './generation'
 import { canvasResize, MAX_IMAGE_SIDE } from './classify-photo'
 import { cutoutBlob, type CutoutBlobResult } from './cutout'
 import { analyzeImage, type PackshotAnalysis } from './wb/packshot'
@@ -35,6 +44,8 @@ import { measureImage } from './import-item'
 import { loadWardrobe } from './wardrobe'
 import * as images from '../storage/images'
 import * as items from '../storage/items'
+import { removeJob } from '../storage/jobs'
+import type { ЗадачаГенерации } from '../storage/jobs'
 
 /** Размер кадра AI-версии: воркер отдаёт JPEG 1024×1024. */
 export const AI_FRAME_SIZE = 1024
@@ -44,8 +55,12 @@ export type СпособОцифровки = Extract<ImageRole, 'ai' | 'выре
 
 /** Зависимости оцифровки: в приложении — реальные, в тестах — подставные. */
 export interface DigitizeDeps {
-  /** Генерация AI-версии. По умолчанию — `POST /generate` в воркер. */
-  generate?: (вещь: Вещь, оригинал: Blob, prompt: string, signal?: AbortSignal) => Promise<Blob>
+  /**
+   * Генерация AI-версии. По умолчанию — асинхронный прогон через воркер
+   * (ADR-0006: `POST /generate` → опрос → скачивание). Подставной вариант
+   * получает референс вместо Оригинала: сырьевой снимок мог быть уже удалён.
+   */
+  generate?: (вещь: Вещь, reference: Blob, prompt: string, signal?: AbortSignal) => Promise<Blob>
   /** Точный вырез пакшота. По умолчанию — `cutoutBlob` (canvas). */
   cutout?: (blob: Blob) => Promise<CutoutBlobResult>
   /**
@@ -74,6 +89,12 @@ export interface DigitizeDeps {
    * массовая оцифровка (очередь, `digitizeMissing`) ничего не перегенерирует.
    */
   force?: boolean
+  /**
+   * Каждое изменение задачи генерации (ADR-0006) — для экрана статуса:
+   * создаётся → ждёт → просрочена/не удалось. Сюда же приходит `taskId`
+   * сразу после `202`.
+   */
+  onJobChange?: (job: ЗадачаГенерации) => void
 }
 
 /** Причина, по которой вещь не удалось оцифровать. */
@@ -134,16 +155,26 @@ async function referenceForGeneration(blob: Blob): Promise<Blob> {
   return await canvasResize(blob, MAX_IMAGE_SIDE)
 }
 
-/** Вещь вместе с её изображениями; `оригинал` уже найден и обязателен. */
+/** Вещь вместе с её изображениями. */
 interface LoadedItem {
   вещь: Вещь
   изображения: Изображение[]
-  оригинал: Изображение
+  /**
+   * Оригинал может отсутствовать: после успешной генерации сырьевой снимок
+   * удаляется (ADR-0006 §4), а у вещи остаётся AI-версия. Где Оригинал
+   * обязателен (вырез, анализ), вызывающий проверяет это сам.
+   */
+  оригинал?: Изображение
+  /** Существующая AI-версия — замена при перегенерации и референс после потери снимка. */
+  ai?: Изображение
+  /** Существующий точный вырез пакшота. */
+  вырез?: Изображение
 }
 
 /**
- * Читает вещь и её изображения. Отсутствие вещи или Оригинала — понятная
- * ошибка: оцифровывать нечего, и это не должно выглядеть как сбой сети.
+ * Читает вещь и её изображения. Отсутствие вещи — понятная ошибка: оцифровывать
+ * нечего, и это не должно выглядеть как сбой сети. Отсутствие Оригинала здесь
+ * не ошибка — см. {@link LoadedItem}.
  */
 async function loadItem(itemId: string): Promise<LoadedItem> {
   const вещь = await items.get(itemId)
@@ -151,11 +182,13 @@ async function loadItem(itemId: string): Promise<LoadedItem> {
     throw new ОшибкаОцифровки('not_found', 'Вещь не найдена')
   }
   const изображения = await images.listByItem(itemId)
-  const оригинал = изображения.find((изображение) => изображение.роль === 'оригинал')
-  if (оригинал === undefined) {
-    throw new ОшибкаОцифровки('no_original', 'У вещи нет Оригинала — оцифровать её нельзя')
+  return {
+    вещь,
+    изображения,
+    оригинал: изображения.find((изображение) => изображение.роль === 'оригинал'),
+    ai: изображения.find((изображение) => изображение.роль === 'ai'),
+    вырез: изображения.find((изображение) => изображение.роль === 'вырез'),
   }
-  return { вещь, изображения, оригинал }
 }
 
 /**
@@ -213,40 +246,96 @@ function findRole(изображения: readonly Изображение[], р�
 // ---------------------------------------------------------------------------
 
 /**
- * Явное действие «Сделать AI-версию»: строит redraw-промпт, передаёт Оригинал
- * референсом в `/generate` и сохраняет результат с ролью `ai`. Оригинал только
- * читается.
+ * Явное действие «Сделать AI-версию»: строит redraw-промпт, ставит асинхронную
+ * задачу генерации (ADR-0006) и сохраняет результат с ролью `ai`.
+ *
+ * Референс image-to-image — Оригинал, а после его удаления (ADR-0006 §4) или
+ * у маркетплейсной вещи без снимка — уже существующая AI-версия: каталожный
+ * вид с белым фоном годится как референс. Если нечем генерировать вообще —
+ * понятная ошибка `no_original`.
  *
  * Идемпотентность: если AI-версия уже есть и `force` не задан, новая не
  * создаётся — возвращается существующая с `status: 'уже есть'`. При
  * `force: true` (кнопка «Перегенерировать») старая AI-версия удаляется, а её
- * место занимает свежая; Оригинал не меняется.
+ * место занимает свежая. Задача генерации после сохранения снимается
+ * (`storage/jobs`), а при неудаче остаётся — её можно допросить или забрать.
  */
 export async function digitizeItem(
   itemId: string,
   deps: DigitizeDeps = {},
 ): Promise<DigitizeOutcome> {
-  const { вещь, изображения, оригинал } = await loadItem(itemId)
-  const существующая = findRole(изображения, 'ai')
-  if (существующая !== undefined && deps.force !== true) {
-    return { itemId, way: 'ai', status: 'уже есть', image: существующая }
+  const { вещь, ai, оригинал } = await loadItem(itemId)
+  if (ai !== undefined && deps.force !== true) {
+    return { itemId, way: 'ai', status: 'уже есть', image: ai }
+  }
+
+  const референс = оригинал ?? ai
+  if (референс === undefined) {
+    throw new ОшибкаОцифровки('no_original', 'У вещи нет Оригинала — оцифровать её нельзя')
   }
 
   const prompt = buildRedrawPrompt(вещь)
   const generate = deps.generate
-  const blob =
-    generate === undefined
-      ? await generateImage(prompt, {
-          width: AI_FRAME_SIZE,
-          height: AI_FRAME_SIZE,
-          model: deps.model,
-          image: await referenceForGeneration(оригинал.blob),
-          signal: deps.signal,
-        })
-      : await generate(вещь, оригинал.blob, prompt, deps.signal)
+  let blob: Blob
+  if (generate !== undefined) {
+    blob = await generate(вещь, референс.blob, prompt, deps.signal)
+  } else {
+    const run = runGeneration(itemId, {
+      prompt,
+      width: AI_FRAME_SIZE,
+      height: AI_FRAME_SIZE,
+      model: deps.model,
+      image: await referenceForGeneration(референс.blob),
+      force: deps.force,
+      signal: deps.signal,
+      ...(deps.onJobChange === undefined ? {} : { onJobChange: deps.onJobChange }),
+    })
+    blob = await run.promise
+  }
 
-  const image = await saveDerived(вещь, 'ai', blob, deps, существующая?.id)
+  return await saveGeneratedResult(itemId, blob, deps)
+}
+
+/**
+ * Сохраняет готовую картинку генерации: кладёт AI-версию (заменяя старую при
+ * перегенерации), удаляет сырьевой снимок по правилу ADR-0006 §4 и снимает
+ * задачу генерации из `storage/jobs`.
+ *
+ * Общая для {@link digitizeItem} и кнопки «Забрать готовое»: обе дороги ведут
+ * к одному и тому же сохранению, двойная AI-версия невозможна.
+ */
+export async function saveGeneratedResult(
+  itemId: string,
+  blob: Blob,
+  deps: DigitizeDeps = {},
+): Promise<DigitizeOutcome> {
+  const { вещь, ai, оригинал } = await loadItem(itemId)
+  if (ai !== undefined && deps.force !== true) {
+    await removeJob(itemId)
+    return { itemId, way: 'ai', status: 'уже есть', image: ai }
+  }
+
+  const image = await saveDerived(вещь, 'ai', blob, deps, ai?.id)
+  await removeUploadedSnapshot(вещь, оригинал)
+  await removeJob(itemId)
   return { itemId, way: 'ai', status: 'создано', image }
+}
+
+/**
+ * Удаляет загруженный снимок-сырьё после успешной генерации (ADR-0006 §4) и
+ * убирает его id из списка изображений вещи. Снимки с маркетплейса
+ * (`источник: 'ссылка'`) не трогаются: для них правило «Оригинал не удаляется»
+ * остаётся в силе.
+ */
+async function removeUploadedSnapshot(вещь: Вещь, оригинал?: Изображение): Promise<void> {
+  if (оригинал === undefined || вещь.источник !== 'фото') return
+  await images.removeUploadedOriginal(оригинал.id)
+  const актуальная = await items.get(вещь.id)
+  if (актуальная === undefined) return
+  const idИзображений = актуальная.idИзображений.filter((id) => id !== оригинал.id)
+  if (idИзображений.length !== актуальная.idИзображений.length) {
+    await items.update(вещь.id, { idИзображений })
+  }
 }
 
 /**
@@ -262,6 +351,9 @@ export async function digitizePackshot(
   const существующий = findRole(изображения, 'вырез')
   if (существующий !== undefined) {
     return { itemId, way: 'вырез', status: 'уже есть', image: существующий }
+  }
+  if (оригинал === undefined) {
+    throw new ОшибкаОцифровки('no_original', 'У вещи нет Оригинала — вырезать нечего')
   }
 
   const cutout = deps.cutout ?? cutoutBlob
@@ -295,6 +387,10 @@ export async function digitizeAuto(
   const ai = findRole(изображения, 'ai')
   if (ai !== undefined) {
     return { itemId, way: 'ai', status: 'уже есть', image: ai }
+  }
+  if (оригинал === undefined) {
+    // Ни выреза, ни AI-версии, а снимок удалён — генерировать и вырезать нечего.
+    throw new ОшибкаОцифровки('no_original', 'У вещи нет Оригинала — оцифровать её нельзя')
   }
 
   const analyze = deps.analyze ?? analyzeImage

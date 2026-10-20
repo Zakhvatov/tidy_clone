@@ -92,8 +92,10 @@ describe('Установка на iPhone: собранный манифест (T
     expect(манифест.name).toBeTruthy()
     expect(манифест.short_name).toBeTruthy()
     expect(манифест.display).toBe('standalone')
-    expect(манифест.start_url).toBe('/')
-    expect(манифест.scope).toBe('/')
+    // База зависит от площадки: `/` на Cloudflare Pages, `/tidy_clone/` на
+    // GitHub Pages. Критерий — согласованность, а не конкретная строка.
+    expect(манифест.start_url).toMatch(/^\/$|^\/[^/]+\/$/)
+    expect(манифест.scope).toBe(манифест.start_url)
     expect(манифест.lang).toBe('ru')
     expect(манифест.background_color).toBe('#FFFFFF')
     expect(манифест.theme_color).toBe('#FFFFFF')
@@ -114,8 +116,13 @@ describe('Установка на iPhone: собранный манифест (T
     expect(обычная512, 'нет обычной иконки 512x512').toBeDefined()
     expect(maskable, 'нет maskable-иконки').toBeDefined()
 
+    // `src` в собранном манифесте может нести базовый путь площадки —
+    // отрезаем его, чтобы проверить сам файл в dist.
+    const base = манифест.start_url ?? '/'
     for (const иконка of иконки) {
-      const файл = join(distDir, String(иконка.src).replace(/^\//, ''))
+      const src = String(иконка.src)
+      const относительноДист = src.startsWith(base) ? src.slice(base.length) : src.replace(/^\//, '')
+      const файл = join(distDir, относительноДист)
       expect(existsSync(файл), `нет файла ${иконка.src}`).toBe(true)
       if (иконка.sizes === undefined) continue
       const [width, height] = иконка.sizes.split('x').map(Number)
@@ -129,7 +136,8 @@ describe('Установка на iPhone: собранный манифест (T
 
 describe('Установка на iPhone: собранный index.html (T20)', () => {
   it('подключает манифест', () => {
-    expect(атрибутСсылки(indexHtml, 'manifest', 'href')).toBe('/manifest.webmanifest')
+    const base = манифест.start_url ?? '/'
+    expect(атрибутСсылки(indexHtml, 'manifest', 'href')).toBe(`${base}manifest.webmanifest`)
   })
 
   it('содержит метатеги iOS', () => {
@@ -140,7 +148,8 @@ describe('Установка на iPhone: собранный index.html (T20)', 
   })
 
   it('подключает apple-touch-icon 180×180', () => {
-    expect(атрибутСсылки(indexHtml, 'apple-touch-icon', 'href')).toBe('/apple-touch-icon.png')
+    const base = манифест.start_url ?? '/'
+    expect(атрибутСсылки(indexHtml, 'apple-touch-icon', 'href')).toBe(`${base}apple-touch-icon.png`)
     const файл = join(distDir, 'apple-touch-icon.png')
     expect(existsSync(файл)).toBe(true)
     expect(размерPng(файл)).toEqual({ width: 180, height: 180 })

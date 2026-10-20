@@ -5,7 +5,9 @@ import {
   TidyApiError,
   apiBaseUrl,
   clientTokenFromEnv,
-  generateImage,
+  createGeneration,
+  downloadGeneration,
+  getGenerationStatus,
   requestBlob,
   requestJson,
 } from './tidy-api'
@@ -152,46 +154,34 @@ describe('tidy-api: заголовок и генерация', () => {
     expect(headers['x-tidy-client']).toBeUndefined()
   })
 
-  it('generateImage шлёт prompt и возвращает Blob', async () => {
-    const jpeg = new Response(new Uint8Array([1, 2, 3]), {
-      status: 200,
-      headers: { 'content-type': 'image/jpeg' },
-    })
-    const { impl, calls } = fakeFetch(jpeg)
-    const blob = await generateImage('hoodie, full garment', {
+  it('createGeneration: POST /generate с ключом возвращает задачу 202', async () => {
+    const { impl, calls } = fakeFetch(
+      jsonResponse(202, { taskId: 'task-1', status: 'PENDING', costRub: 4, model: 'nano-banana-2-1' }),
+    )
+    const task = await createGeneration('hoodie, full garment', {
       fetchImpl: impl,
       baseUrl: 'https://worker.test/',
+      idempotencyKey: 'item-1:nano-banana-2-1',
+      model: 'nano-banana-2-1',
     })
-    expect(await blob.arrayBuffer()).toEqual(new Uint8Array([1, 2, 3]).buffer)
+    expect(task).toEqual({
+      taskId: 'task-1',
+      status: 'PENDING',
+      costRub: 4,
+      model: 'nano-banana-2-1',
+    })
     expect(calls[0]?.url).toBe('https://worker.test/generate')
     expect(calls[0]?.init?.method).toBe('POST')
-    expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({ prompt: 'hoodie, full garment' })
-  })
-
-  it('generateImage передаёт выбранную модель', async () => {
-    const jpeg = new Response(new Uint8Array([1]), {
-      status: 200,
-      headers: { 'content-type': 'image/jpeg' },
-    })
-    const { impl, calls } = fakeFetch(jpeg)
-    await generateImage('hoodie', {
-      fetchImpl: impl,
-      baseUrl: 'https://worker.test',
-      model: 'nano-banana-2-1',
-    })
     expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({
-      prompt: 'hoodie',
+      prompt: 'hoodie, full garment',
       model: 'nano-banana-2-1',
+      idempotencyKey: 'item-1:nano-banana-2-1',
     })
   })
 
-  it('generateImage шлёт референс для i2i (D13)', async () => {
-    const jpeg = new Response(new Uint8Array([1]), {
-      status: 200,
-      headers: { 'content-type': 'image/jpeg' },
-    })
-    const { impl, calls } = fakeFetch(jpeg)
-    await generateImage('redraw hoodie', {
+  it('createGeneration шлёт референс для i2i (D13)', async () => {
+    const { impl, calls } = fakeFetch(jsonResponse(202, { taskId: 't', status: 'PENDING' }))
+    await createGeneration('redraw hoodie', {
       fetchImpl: impl,
       baseUrl: 'https://worker.test',
       image: new Blob(['orig'], { type: 'image/png' }),
@@ -204,15 +194,11 @@ describe('tidy-api: заголовок и генерация', () => {
   })
 
   it('нечитаемый референс деградирует в текстовую генерацию с предупреждением', async () => {
-    const jpeg = new Response(new Uint8Array([1]), {
-      status: 200,
-      headers: { 'content-type': 'image/jpeg' },
-    })
-    const { impl, calls } = fakeFetch(jpeg)
+    const { impl, calls } = fakeFetch(jsonResponse(202, { taskId: 't', status: 'PENDING' }))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const deadBlob = {} as Blob
-      await generateImage('redraw hoodie', {
+      await createGeneration('redraw hoodie', {
         fetchImpl: impl,
         baseUrl: 'https://worker.test',
         image: deadBlob,
@@ -229,7 +215,7 @@ describe('tidy-api: заголовок и генерация', () => {
     const { impl, calls } = fakeFetch(new Response(null, { status: 500 }))
     const big = new Blob([new Uint8Array([1])], { type: 'image/png' })
     Object.defineProperty(big, 'size', { value: 8 * 1024 * 1024 + 1 })
-    const error = await generateImage('hoodie', {
+    const error = await createGeneration('hoodie', {
       fetchImpl: impl,
       baseUrl: 'https://worker.test',
       image: big,
@@ -241,7 +227,7 @@ describe('tidy-api: заголовок и генерация', () => {
 
   it('неподдерживаемый формат референса → unsupported_media', async () => {
     const { impl, calls } = fakeFetch(new Response(null, { status: 500 }))
-    const error = await generateImage('hoodie', {
+    const error = await createGeneration('hoodie', {
       fetchImpl: impl,
       baseUrl: 'https://worker.test',
       image: new Blob([new Uint8Array([1])], { type: 'image/heic' }),
@@ -249,6 +235,65 @@ describe('tidy-api: заголовок и генерация', () => {
     expect(error).toBeInstanceOf(TidyApiError)
     expect((error as TidyApiError).code).toBe('unsupported_media')
     expect(calls).toHaveLength(0)
+  })
+
+  it('ответ 202 без taskId → invalid_response, а не молчаливый undefined', async () => {
+    const { impl } = fakeFetch(jsonResponse(202, { status: 'PENDING' }))
+    const error = await createGeneration('hoodie', {
+      fetchImpl: impl,
+      baseUrl: 'https://worker.test',
+    }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(TidyApiError)
+    expect((error as TidyApiError).code).toBe('invalid_response')
+  })
+
+  it('getGenerationStatus: короткий GET статуса читает status и costRub', async () => {
+    const { impl, calls } = fakeFetch(
+      jsonResponse(200, { taskId: 'task-1', status: 'SUCCEEDED', costRub: 4 }),
+    )
+    const статус = await getGenerationStatus('task-1', {
+      fetchImpl: impl,
+      baseUrl: 'https://worker.test',
+    })
+    expect(статус).toEqual({ taskId: 'task-1', status: 'SUCCEEDED', costRub: 4 })
+    expect(calls[0]?.url).toBe('https://worker.test/generate/task-1')
+    expect(calls[0]?.init?.method).toBe('GET')
+  })
+
+  it('getGenerationStatus: не-JSON тело → invalid_response', async () => {
+    const { impl } = fakeFetch(new Response('паутина', { status: 200 }))
+    const error = await getGenerationStatus('task-1', {
+      fetchImpl: impl,
+      baseUrl: 'https://worker.test',
+    }).catch((e: unknown) => e)
+    expect(error).toMatchObject({ code: 'invalid_response' })
+  })
+
+  it('409 у картинки → not_ready: не сбой, а «спросили раньше времени»', async () => {
+    const { impl } = fakeFetch(
+      jsonResponse(409, { error: { code: 'not_ready', message: 'Изображение ещё не готово' } }),
+    )
+    const error = await requestJson('/generate/task-1/image', { fetchImpl: impl }).catch(
+      (e: unknown) => e,
+    )
+    expect(error).toBeInstanceOf(TidyApiError)
+    expect((error as TidyApiError).code).toBe('not_ready')
+    expect((error as TidyApiError).message).toBe('Изображение ещё не готово')
+  })
+
+  it('downloadGeneration: отдельный GET отдаёт байты картинки', async () => {
+    const jpeg = new Response(new Uint8Array([1, 2, 3]), {
+      status: 200,
+      headers: { 'content-type': 'image/jpeg' },
+    })
+    const { impl, calls } = fakeFetch(jpeg)
+    const blob = await downloadGeneration('task-1', {
+      fetchImpl: impl,
+      baseUrl: 'https://worker.test',
+    })
+    expect(await blob.arrayBuffer()).toEqual(new Uint8Array([1, 2, 3]).buffer)
+    expect(calls[0]?.url).toBe('https://worker.test/generate/task-1/image')
+    expect(calls[0]?.init?.method).toBe('GET')
   })
 
   it('JSON вместо картинки и пустой ответ → invalid_response', async () => {

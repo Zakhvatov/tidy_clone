@@ -10,7 +10,9 @@ import { DB_NAME, closeDb } from '../../storage/db'
 import * as images from '../../storage/images'
 import * as items from '../../storage/items'
 import * as outfits from '../../storage/outfits'
+import { saveJob, type ЗадачаГенерации } from '../../storage/jobs'
 import { digitizeItem } from '../../services/digitize'
+import { ОшибкаГенерации } from '../../services/generation'
 import { DEFAULT_GENERATION_MODEL_SLUG } from '../../services/generation-models'
 import { AppRoutes } from '../App'
 
@@ -142,7 +144,9 @@ describe('Карточка вещи (T15)', () => {
 
     expect(await screen.findByRole('heading', { name: 'Худи тестовое' })).toBeInTheDocument()
     expect(screen.queryByRole('group', { name: 'Изображение' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Сделать AI-версию' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /^Сделать AI-версию · \d+ ₽$/ }),
+    ).toBeInTheDocument()
     expect(await screen.findByRole('img')).toHaveAttribute('src', 'blob:orig')
   })
 
@@ -291,16 +295,19 @@ describe('Карточка вещи (T15)', () => {
     expect(await screen.findByRole('heading', { name: 'Худи тестовое' })).toBeInTheDocument()
     expect(mockedDigitize).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Сделать AI-версию' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Сделать AI-версию · \d+ ₽$/ }))
 
     await waitFor(() =>
       expect(mockedDigitize).toHaveBeenCalledWith('вещь-1', {
         force: false,
         model: DEFAULT_GENERATION_MODEL_SLUG,
+        onJobChange: expect.any(Function),
       }),
     )
     expect(await screen.findByRole('note')).toHaveTextContent('AI-версия')
-    expect(await screen.findByRole('button', { name: 'Перегенерировать' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: /^Перегенерировать · \d+ ₽$/ }),
+    ).toBeInTheDocument()
   })
 
   it('показывает модели с ценой и передаёт выбранную модель в генерацию', async () => {
@@ -314,17 +321,19 @@ describe('Карточка вещи (T15)', () => {
     expect(await screen.findByRole('radio', { name: /Nano Banana 2\.1/ })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /Midjourney/ })).toBeInTheDocument()
     expect(screen.getByText('20 ₽')).toBeInTheDocument()
-    expect(screen.getByText('7 ₽ за кадр')).toBeInTheDocument()
+    // Цена живёт в самой кнопке (ADR-0006): по умолчанию — 7 ₽.
+    expect(screen.getByRole('button', { name: 'Сделать AI-версию · 7 ₽' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('radio', { name: /Nano Banana 2\.1/ }))
-    expect(screen.getByText('4 ₽ за кадр')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Сделать AI-версию · 4 ₽' })).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Сделать AI-версию' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Сделать AI-версию · 4 ₽' }))
 
     await waitFor(() =>
       expect(mockedDigitize).toHaveBeenCalledWith('вещь-1', {
         force: false,
         model: 'nano-banana-2-1',
+        onJobChange: expect.any(Function),
       }),
     )
   })
@@ -345,13 +354,14 @@ describe('Карточка вещи (T15)', () => {
     })
 
     renderItem('вещь-1')
-    fireEvent.click(await screen.findByRole('button', { name: 'Перегенерировать' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Перегенерировать · \d+ ₽$/ }))
 
     // Именно force: иначе сервис T10 вернул бы «уже есть» и запрос бы не ушёл.
     await waitFor(() =>
       expect(mockedDigitize).toHaveBeenCalledWith('вещь-1', {
         force: true,
         model: DEFAULT_GENERATION_MODEL_SLUG,
+        onJobChange: expect.any(Function),
       }),
     )
     await waitFor(() => expect(screen.getByRole('img')).toHaveAttribute('src', 'blob:ai-new'))
@@ -365,12 +375,12 @@ describe('Карточка вещи (T15)', () => {
     mockedDigitize.mockRejectedValueOnce(Object.assign(new Error('лимит'), { code: 'rate_limited' }))
 
     renderItem('вещь-1')
-    fireEvent.click(await screen.findByRole('button', { name: 'Сделать AI-версию' }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Сделать AI-версию · \d+ ₽$/ }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Слишком много запросов на оцифровку (429)')
 
     mockedDigitize.mockRejectedValueOnce(Object.assign(new Error('нет доступа'), { code: 'unauthorized' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Сделать AI-версию' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Сделать AI-версию · \d+ ₽$/ }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Сервис оцифровки отклонил запрос (401)',
@@ -407,6 +417,87 @@ describe('Карточка вещи (T15)', () => {
     // «Перезапуск»: закрываем и заново открываем БД — правка на месте.
     await closeDb()
     expect((await items.get('вещь-1'))?.сезон).toEqual(['демисезон'])
+  })
+
+  it('висящая задача при открытии: статус-блок вместо кнопки, «Обновить» допрашивает', async () => {
+    await items.create(makeItem({ id: 'вещь-1' }))
+    await images.addOriginal(
+      makeImage('о-1', 'вещь-1', 'оригинал', '2024-03-05T10:00:00.000Z', 'orig'),
+    )
+    // Задача пережила закрытие вкладки: taskId в IndexedDB, статус «ждёт».
+    const висящая: ЗадачаГенерации = {
+      id: 'вещь-1',
+      idВещи: 'вещь-1',
+      ключ: 'вещь-1',
+      попытка: 1,
+      force: false,
+      статус: 'ждёт',
+      taskId: 'task-1',
+      датаСеанса: new Date().toISOString(),
+      датаСоздания: new Date().toISOString(),
+      датаОбновления: new Date().toISOString(),
+    }
+    await saveJob(висящая)
+
+    renderItem('вещь-1')
+
+    // Вместо кнопки — статус: карточка знает про задачу.
+    expect(await screen.findByText('Ждём картинку от сервиса…')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Сделать AI-версию/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Обновить' })).toBeInTheDocument()
+    // Прогона нет — «Обновить» запускает допрос той же задачи.
+    expect(mockedDigitize).not.toHaveBeenCalled()
+  })
+
+  it('просроченная задача: «Повторить» допрашивает ту же задачу, кнопка возвращается после успеха', async () => {
+    await items.create(makeItem({ id: 'вещь-1' }))
+    await images.addOriginal(
+      makeImage('о-1', 'вещь-1', 'оригинал', '2024-03-05T10:00:00.000Z', 'orig'),
+    )
+    const просроченная: ЗадачаГенерации = {
+      id: 'вещь-1',
+      idВещи: 'вещь-1',
+      ключ: 'вещь-1',
+      попытка: 1,
+      force: false,
+      статус: 'просрочена',
+      taskId: 'task-1',
+      датаСеанса: new Date(0).toISOString(),
+      датаСоздания: new Date(0).toISOString(),
+      датаОбновления: new Date(0).toISOString(),
+    }
+    await saveJob(просроченная)
+
+    // Первая «Повторить» снова рвётся по таймауту (как в сервисе: сначала
+    // onJobChange('просрочена'), затем throw), вторая — доводит до конца.
+    mockedDigitize
+      .mockImplementationOnce(async (_id, deps) => {
+        deps?.onJobChange?.({ ...просроченная, статус: 'ждёт' })
+        deps?.onJobChange?.({ ...просроченная, статус: 'просрочена' })
+        throw new ОшибкаГенерации('timeout', 'Не удалось дождаться генерацию за 5 минут')
+      })
+      .mockImplementationOnce(async (idВещи) => {
+        const image = await images.addAiVersion(
+          makeImage('а-1', idВещи, 'ai', '2024-03-06T10:00:00.000Z', 'ai'),
+        )
+        return { itemId: idВещи, way: 'ai', status: 'создано', image }
+      })
+
+    renderItem('вещь-1')
+
+    // ОшибкаГенерации не роняет карточку в общий alert — судьбу задачи
+    // показывает статус-блок; после таймаута он снова «просрочена».
+    fireEvent.click(await screen.findByRole('button', { name: 'Повторить' }))
+    expect(await screen.findByRole('button', { name: 'Повторить' })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    // Второй «Повторить» завершается успехом: ai появляется, кнопка возвращается.
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
+    expect(await screen.findByRole('note')).toHaveTextContent('AI-версия')
+    expect(
+      await screen.findByRole('button', { name: /^Перегенерировать · \d+ ₽$/ }),
+    ).toBeInTheDocument()
+    expect(mockedDigitize).toHaveBeenCalledTimes(2)
   })
 
   it('правка цветов в карточке сохраняется в IndexedDB и переживает перезапуск', async () => {

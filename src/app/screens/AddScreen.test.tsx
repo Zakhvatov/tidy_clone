@@ -18,27 +18,19 @@ vi.mock('../../storage/items', async (importOriginal) => {
   return { ...actual, create: vi.fn(actual.create) }
 })
 
-/** Фикстура карточки WB: поля повторяют `info/ru/card.json`. */
-interface CardFixture {
-  nm_id: number
-  imt_name: string
-  subj_name: string
-  subj_root_name: string
-  nm_colors_names?: string
-  selling?: { brand_name?: string }
-  media?: { photo_count?: number }
-  options?: Array<{ name: string; value: string }>
-}
-
-const BASE_CARD: CardFixture = {
-  nm_id: 16020837,
-  imt_name: 'Худи тестовое',
-  subj_name: 'Худи',
-  subj_root_name: 'Одежда',
-  nm_colors_names: 'чёрный, серый',
-  selling: { brand_name: 'Тестовый бренд' },
-  media: { photo_count: 1 },
-  options: [{ name: 'Состав', value: 'хлопок 80%, полиэстер 20%' }],
+/**
+ * Мок сети: только классификация фото. Ссылочный вход из формы убран
+ * (ADR-0006 §1), WB-сеть здесь больше не нужна.
+ */
+function makeFetch(options: { classify?: () => Response } = {}) {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.endsWith('/classify')) {
+      if (options.classify) return options.classify()
+      return jsonResponse(200, { category: 'Обувь', subcategory: 'кроссовки', confidence: 0.9 })
+    }
+    return new Response('not found', { status: 404 })
+  }) as unknown as typeof fetch
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -49,38 +41,25 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 /**
- * Мок сети: отдаёт card.json/sellers.json, фото и ответ воркера классификации.
- * Номер `nm` берётся из URL карточки, чтобы одна и та же подготовка работала
- * и на повторе, и на нескольких разных ссылках.
+ * Мок асинхронного воркера генерации (ADR-0006): `POST /generate` → 202 с
+ * `taskId`, статус → сразу `SUCCEEDED`, скачивание → байты.
  */
-function makeFetch(options: {
-  card?: CardFixture | ((nm: number) => CardFixture)
-  classify?: () => Response
-}) {
-  return vi.fn(async (input: RequestInfo | URL) => {
+function makeGenerationFetch() {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
-    const cardMatch = url.match(/(\d+)\/info\/ru\/card\.json$/)
-    if (cardMatch) {
-      const nm = Number(cardMatch[1])
-      const card =
-        typeof options.card === 'function'
-          ? options.card(nm)
-          : (options.card ?? { ...BASE_CARD, nm_id: nm })
-      return jsonResponse(200, card)
+    if (url.endsWith('/generate') && init?.method === 'POST') {
+      return jsonResponse(202, { taskId: 'task-add', status: 'PENDING', costRub: 7, model: 'nano' })
     }
-    if (url.includes('/info/sellers.json')) {
-      return jsonResponse(200, { supplierName: 'ООО Тест' })
-    }
-    if (url.includes('/images/big/')) {
-      return new Response(new Uint8Array([0x70, 0x68, 0x6f, 0x74, 0x6f]), {
-        headers: { 'content-type': 'image/webp' },
+    if (url.includes('/generate/task-add/image')) {
+      return new Response(new Blob(['jpeg-bytes'], { type: 'image/jpeg' }), {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
       })
     }
-    if (url.endsWith('/classify')) {
-      if (options.classify) return options.classify()
+    if (url.includes('/classify')) {
       return jsonResponse(200, { category: 'Обувь', subcategory: 'кроссовки', confidence: 0.9 })
     }
-    return new Response('not found', { status: 404 })
+    return jsonResponse(200, { taskId: 'task-add', status: 'SUCCEEDED', costRub: 7 })
   }) as unknown as typeof fetch
 }
 
@@ -107,22 +86,35 @@ function renderAdd() {
   )
 }
 
-async function вставитьСсылку(link: string, name: string) {
-  fireEvent.change(screen.getByLabelText('Ссылка на товар'), { target: { value: link } })
-  fireEvent.click(screen.getByRole('button', { name: 'Найти вещь' }))
-  expect(await screen.findByRole('heading', { name })).toBeInTheDocument()
-}
-
 async function загрузитьФото(file: File) {
   const input = screen.getByLabelText('Загрузить фото') as HTMLInputElement
   fireEvent.change(input, { target: { files: [file] } })
+  await screen.findByRole('heading', { name: 'Без названия' })
 }
 
-function фото(): File {
-  return new File(['image-bytes'], 'фото.jpg', { type: 'image/jpeg' })
+function фото(имя = 'фото.jpg'): File {
+  return new File(['image-bytes'], имя, { type: 'image/jpeg' })
 }
 
-describe('Экран добавления вещи (T8)', () => {
+/** «Добавить в гардероб» из превью: вещь сохранена, открылось подтверждение. */
+async function сохранитьИзПревью() {
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
+  await screen.findByText('Вещь сохранена. Сделать AI-версию?')
+}
+
+/** Проходит путь «фото → превью → Добавить в гардероб» до фазы подтверждения. */
+async function добавитьДоПодтверждения(file: File = фото()) {
+  await загрузитьФото(file)
+  await сохранитьИзПревью()
+}
+
+/** Отвечает на подтверждение: «Добавить без AI-версии» → уходим в гардероб. */
+async function добавитьБезAi() {
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить без AI-версии' }))
+  await screen.findByRole('heading', { name: 'Гардероб' })
+}
+
+describe('Экран добавления вещи (T8 + ADR-0006)', () => {
   beforeEach(async () => {
     await closeDb()
     await deleteDB(DB_NAME)
@@ -145,69 +137,62 @@ describe('Экран добавления вещи (T8)', () => {
     await deleteDB(DB_NAME)
   })
 
-  it('сохраняет вещь по ссылке с Оригиналом и категорией из словаря', async () => {
+  it('форма входа по ссылке убрана — только загрузка своего фото', async () => {
     vi.stubGlobal('fetch', makeFetch({}))
     renderAdd()
 
-    await вставитьСсылку('https://www.wildberries.ru/catalog/16020837/detail.aspx', 'Худи тестовое')
-    expect(screen.getByText('Тестовый бренд')).toBeInTheDocument()
-    expect(screen.getByText('чёрный, серый')).toBeInTheDocument()
-    expect(screen.getByText('пакшот: нет')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
-    expect(await screen.findByRole('heading', { name: 'Гардероб' })).toBeInTheDocument()
-
-    const вещи = await items.list()
-    expect(вещи).toHaveLength(1)
-    const вещь = вещи[0]
-    expect(вещь.категория).toBe('Второй слой')
-    expect(вещь.подкатегория).toBe('худи')
-    expect(вещь.источник).toBe('ссылка')
-    expect(вещь.wbNmId).toBe(16020837)
-    expect(вещь.цвета).toEqual(['чёрный', 'серый'])
-    expect(вещь.состав).toEqual(['хлопок 80%, полиэстер 20%'])
-
-    const сохранённые = await images.listByItem(вещь.id)
-    expect(сохранённые).toHaveLength(1)
-    expect(сохранённые[0]?.роль).toBe('оригинал')
-    expect(сохранённые[0]?.blob.size).toBeGreaterThan(0)
+    expect(screen.getByText('Загрузить фото')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Ссылка на товар' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Найти вещь' })).toBeNull()
   })
 
-  it('неизвестную категорию WB кладёт в «Разное», но вещь сохраняет', async () => {
-    vi.stubGlobal(
-      'fetch',
-      makeFetch({ card: { ...BASE_CARD, subj_name: 'Носороги', subj_root_name: 'Прочее' } }),
-    )
-    renderAdd()
-
-    await вставитьСсылку('https://www.wildberries.ru/catalog/16020837/detail.aspx', 'Худи тестовое')
-    expect(screen.getByText(/выберите вручную/i)).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
-    expect(await screen.findByRole('heading', { name: 'Гардероб' })).toBeInTheDocument()
-
-    const [вещь] = await items.list()
-    expect(вещь?.категория).toBe('Разное')
-    expect(вещь?.подкатегория).toBe('Разное')
-  })
-
-  it('по фото берёт категорию у vision и сохраняет вещь', async () => {
+  it('по фото берёт категорию у vision; вещь сохраняется до генерации', async () => {
     vi.stubGlobal('fetch', makeFetch({}))
     renderAdd()
 
     await загрузитьФото(фото())
-    expect(await screen.findByRole('heading', { name: 'Без названия' })).toBeInTheDocument()
     expect(screen.getByText('Обувь')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
-    expect(await screen.findByRole('heading', { name: 'Гардероб' })).toBeInTheDocument()
+    await сохранитьИзПревью()
 
+    // Вещь уже в гардеробе, даже если AI-версию делать не будут.
+    expect(await items.count()).toBe(1)
     const [вещь] = await items.list()
     expect(вещь?.источник).toBe('фото')
     expect(вещь?.категория).toBe('Обувь')
     expect(вещь?.подкатегория).toBe('кроссовки')
     const сохранённые = await images.listByItem(вещь!.id)
     expect(сохранённые[0]?.роль).toBe('оригинал')
+
+    await добавитьБезAi()
+  })
+
+  it('подтверждение показывает пикер и кнопку с ценой; «без AI-версии» заканчивает добавление', async () => {
+    vi.stubGlobal('fetch', makeFetch({}))
+    renderAdd()
+
+    await добавитьДоПодтверждения()
+
+    // Пикер моделей доступен прямо в подтверждении (ADR-0006).
+    expect(screen.getByRole('group', { name: 'Модель' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Сделать AI-версию · \d+ ₽$/ })).toBeInTheDocument()
+
+    await добавитьБезAi()
+    expect(await items.count()).toBe(1)
+  })
+
+  it('кнопка с ценой реально генерирует AI-версию и завершает добавление', async () => {
+    vi.stubGlobal('fetch', makeGenerationFetch())
+    renderAdd()
+
+    await добавитьДоПодтверждения()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Сделать AI-версию · \d+ ₽$/ }))
+    await screen.findByRole('heading', { name: 'Гардероб' })
+
+    const [вещь] = await items.list()
+    const роли = (await images.listByItem(вещь!.id)).map((i) => i.роль)
+    expect(роли).toContain('ai')
   })
 
   it('при ошибке классификации фото вещь всё равно сохраняется', async () => {
@@ -215,11 +200,11 @@ describe('Экран добавления вещи (T8)', () => {
     renderAdd()
 
     await загрузитьФото(фото())
-    expect(await screen.findByRole('heading', { name: 'Без названия' })).toBeInTheDocument()
     expect(screen.getByText(/выберите вручную/i)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
-    expect(await screen.findByRole('heading', { name: 'Гардероб' })).toBeInTheDocument()
+    await screen.findByText('Вещь сохранена. Сделать AI-версию?')
+    await добавитьБезAi()
 
     const [вещь] = await items.list()
     expect(вещь?.источник).toBe('фото')
@@ -227,61 +212,43 @@ describe('Экран добавления вещи (T8)', () => {
     expect(await items.count()).toBe(1)
   })
 
-  it('мусорная ссылка даёт понятную ошибку и ничего не сохраняет', async () => {
-    vi.stubGlobal('fetch', makeFetch({}))
-    renderAdd()
-
-    fireEvent.change(screen.getByLabelText('Ссылка на товар'), {
-      target: { value: 'https://example.com/catalog/123/detail.aspx' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Найти вещь' }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Это не похоже на ссылку Wildberries')
-    expect(screen.queryByRole('button', { name: 'Добавить в гардероб' })).toBeNull()
-    expect(await items.count()).toBe(0)
-  })
-
   it('при ошибке сохранения «Повторить» повторяет именно сохранение, а не загрузку', async () => {
     const fetchMock = makeFetch({})
     vi.stubGlobal('fetch', fetchMock)
     renderAdd()
 
-    await вставитьСсылку('https://www.wildberries.ru/catalog/16020837/detail.aspx', 'Худи тестовое')
+    await загрузитьФото(фото())
+    const классификаций = vi.mocked(fetchMock).mock.calls.length
 
     vi.mocked(items.create).mockRejectedValueOnce(new ОшибкаХранилища('диск занят'))
     fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('диск занят')
-    const запросовПослеОшибки = vi.mocked(fetchMock).mock.calls.length
 
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
 
-    expect(await screen.findByRole('heading', { name: 'Гардероб' })).toBeInTheDocument()
-    // Ссылка и фото повторно не тянулись: повтор — это именно сохранение.
-    expect(vi.mocked(fetchMock).mock.calls.length).toBe(запросовПослеОшибки)
+    await screen.findByText('Вещь сохранена. Сделать AI-версию?')
+    // Фото повторно не тянулось: повтор — это именно сохранение.
+    expect(vi.mocked(fetchMock).mock.calls.length).toBe(классификаций)
     expect(await items.count()).toBe(1)
   })
 
   it('повторное добавление не ломает уже сохранённые вещи', async () => {
-    const cardFor = (nm: number): CardFixture => ({ ...BASE_CARD, nm_id: nm, imt_name: `Худи ${nm}` })
-    vi.stubGlobal('fetch', makeFetch({ card: cardFor }))
+    vi.stubGlobal('fetch', makeFetch({}))
     renderAdd()
 
-    await вставитьСсылку('https://www.wildberries.ru/catalog/16020837/detail.aspx', 'Худи 16020837')
-    fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
-    expect(await screen.findByRole('heading', { name: 'Гардероб' })).toBeInTheDocument()
+    await добавитьДоПодтверждения(фото('первое.jpg'))
+    await добавитьБезAi()
 
-    // Возврат на экран добавления: форма снова пустая и готова к следующей ссылке.
+    // Возврат на экран добавления: форма снова пустая и готова к следующему фото.
     fireEvent.click(screen.getByRole('link', { name: 'Добавить' }))
     expect(await screen.findByRole('heading', { name: 'Добавить вещь' })).toBeInTheDocument()
 
-    await вставитьСсылку('https://www.wildberries.ru/catalog/14058746/detail.aspx', 'Худи 14058746')
-    fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
-    expect(await screen.findByRole('heading', { name: 'Гардероб' })).toBeInTheDocument()
+    await добавитьДоПодтверждения(фото('второе.jpg'))
+    await добавитьБезAi()
 
     const вещи = await items.list()
     expect(вещи).toHaveLength(2)
     expect(new Set(вещи.map((вещь) => вещь.id)).size).toBe(2)
-    expect(вещи.map((вещь) => вещь.название).sort()).toEqual(['Худи 14058746', 'Худи 16020837'])
   })
 })

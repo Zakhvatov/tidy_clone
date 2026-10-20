@@ -7,19 +7,25 @@
  *   - vision-модель (провайдер `opencode-go`) — через секрет `OPENCODE_API_KEY`.
  * В клиент ничего из этого не попадает.
  *
- * Генерация у IskraGen асинхронная: `POST /generations` → 202 `{id}`, затем
- * опрос `GET /generations/:id` до `SUCCEEDED` и скачивание через
- * `GET /generations/:id/download`. Воркер прячет эту схему: клиент по-прежнему
- * получает байты картинки одним ответом.
+ * Генерация у IskraGen асинхронная, и воркер больше этого не прячет
+ * (ADR-0006): клиент сам создаёт задачу, опрашивает статус и забирает файл.
  *
  * Image-to-image (D13): с `imageBase64`+`mimeType` воркер сначала грузит
  * картинку в `POST /v1/files/` (получает `url`), затем подставляет её в
  * `params` выбранной i2i-модели (`input_urls`/`image_urls`/`image_input`).
  * Т2и-запросы без картинки работают по прежнему сценарию D12.
  *
+ * Идемпотентность (ADR-0006): клиент присылает `idempotencyKey` — воркер
+ * пробрасывает его в `Idempotency-Key` провайдера. Повторный `POST` с тем же
+ * ключом возвращает уже существующую задачу **без повторного списания**,
+ * поэтому потерянный ответ не стоит второй оплаты.
+ *
  * Маршруты:
  *   GET  /models                              → {models:[{slug,title,priceRub}], defaultSlug}
- *   POST /generate  {prompt, model?, width?, height?, imageBase64?, mimeType?} → image/* байтами
+ *   POST /generate  {prompt, model?, imageBase64?, mimeType?, idempotencyKey?}
+ *                                          → 202 {taskId, status, costRub, model}
+ *   GET  /generate/{taskId}                  → 200 {taskId, status, costRub}
+ *   GET  /generate/{taskId}/image            → байты готового изображения
  *   POST /classify  {imageBase64, mimeType}   → {category, subcategory, confidence}
  *   GET  /health                              → {ok, generate, classify}
  */
@@ -33,8 +39,7 @@ import {
 } from "./taxonomy";
 import {
   CLASSIFY_TIMEOUT_MS,
-  GENERATE_POLL_INTERVAL_MS,
-  GENERATE_TIMEOUT_MS,
+  GENERATE_STATUS_TIMEOUT_MS,
   IMAGE_DOWNLOAD_TIMEOUT_MS,
   MAX_GENERATE_BODY_BYTES,
   MAX_GENERATE_IMAGE_BYTES,
@@ -74,8 +79,12 @@ export interface Env {
   CLIENT_TOKEN?: string;
   /** Список источников через запятую. Переопределяется var-ом `ALLOWED_ORIGINS`. */
   ALLOWED_ORIGINS?: string;
-  /** Лимитер генерации (20 запросов/мин). */
+  /** Лимитер создания генерации (5 запросов/мин — каждый кадр стоит денег). */
   GENERATE_RATE_LIMITER?: RateLimitBinding;
+  /** Лимитер опроса статуса генерации (60 запросов/мин). */
+  GENERATION_STATUS_RATE_LIMITER?: RateLimitBinding;
+  /** Лимитер скачивания результата генерации (10 запросов/мин). */
+  GENERATION_IMAGE_RATE_LIMITER?: RateLimitBinding;
   /** Лимитер классификации (40 запросов/мин). */
   CLASSIFY_RATE_LIMITER?: RateLimitBinding;
   /** Лимитер каталога моделей. */
@@ -139,6 +148,7 @@ export type ApiErrorCode =
   | "invalid_input"
   | "payload_too_large"
   | "not_found"
+  | "not_ready"
   | "method_not_allowed"
   | "internal_error"
   | "not_configured"
@@ -417,19 +427,32 @@ async function rateLimitKey(request: Request): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export type ProtectedRoute = "generate" | "classify" | "models";
+export type ProtectedRoute =
+  | "generate"
+  | "generation_status"
+  | "generation_image"
+  | "classify"
+  | "models";
 
 /**
  * Cloudflare Rate Limiting. Отсутствие binding в локальном запуске — не ошибка:
  * лимит просто не применяется. Сбой самого лимитера — fail-open, чтобы не ронять сервис.
+ *
+ * У генерации три правила: создание (5/мин, кадр платный), опрос статуса
+ * (60/мин — клиент дёргает каждые ~3 с) и скачивание (10/мин — файл один на задачу).
  */
 async function enforceRateLimit(request: Request, env: Env, route: ProtectedRoute): Promise<void> {
+  const fallback = env.RATE_LIMITER;
   const limiter =
     route === "generate"
-      ? env.GENERATE_RATE_LIMITER ?? env.RATE_LIMITER
-      : route === "classify"
-        ? env.CLASSIFY_RATE_LIMITER ?? env.RATE_LIMITER
-        : env.MODELS_RATE_LIMITER ?? env.RATE_LIMITER;
+      ? env.GENERATE_RATE_LIMITER ?? fallback
+      : route === "generation_status"
+        ? env.GENERATION_STATUS_RATE_LIMITER ?? fallback
+        : route === "generation_image"
+          ? env.GENERATION_IMAGE_RATE_LIMITER ?? fallback
+          : route === "classify"
+            ? env.CLASSIFY_RATE_LIMITER ?? fallback
+            : env.MODELS_RATE_LIMITER ?? fallback;
   if (!limiter || typeof limiter.limit !== "function") return;
 
   let outcome: { success: boolean };
@@ -451,21 +474,29 @@ async function guardProtected(request: Request, env: Env, route: ProtectedRoute)
 }
 
 /**
- * `fetch` с таймаутом, который реально отменяет запрос через `AbortSignal`.
- * `withTimeout` без отмены оставляет подвисший подзапрос живым: воркер не
- * может вернуть ответ, и клиентское соединение обрывается. `504` — таймаут
- * шлюза; ошибку сети обрабатывает вызывающий код как `502`.
+ * `fetch` с дедлайном, который реально отменяет запрос через `AbortSignal` —
+ * **вместе с чтением тела**.
+ *
+ * Прежний вариант снимал таймаут в `finally` сразу после прихода заголовков,
+ * поэтому `response.arrayBuffer()` на зависшем скачивании висел без ограничения
+ * вовсе: воркер не мог вернуть ответ, а клиент видел «Не удалось связаться с
+ * сервисом» при живом провайдере (ADR-0006, «Надёжность»). Здесь таймаут
+ * гасится только после того, как тело прочитано.
+ *
+ * `504` — таймаут шлюза; ошибку сети обрабатывает вызывающий код как `502`.
  */
-async function fetchWithTimeout(
+async function timedFetch<T>(
   url: string,
   init: RequestInit,
   ms: number,
   code: ApiErrorCode,
-): Promise<Response> {
+  read: (response: Response) => Promise<T>,
+): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    return await read(response);
   } catch (error) {
     if (controller.signal.aborted) {
       throw new HttpError(504, code, "Модель не ответила за отведённое время");
@@ -474,6 +505,41 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Ответ провайдера, разобранный до JSON: статус нужен для маппинга ошибок. */
+interface ProviderJson {
+  status: number;
+  ok: boolean;
+  payload: unknown;
+}
+
+/**
+ * Читает JSON-ответ провайдера под общим дедлайном. Нечитаемое тело на
+ * ошибочном статусе не считается сбоем: маппингу ошибок нужен только код.
+ */
+async function readJsonTimed(url: string, init: RequestInit, ms: number): Promise<ProviderJson> {
+  return await timedFetch(url, init, ms, "model_timeout", async (response) => {
+    const payload: unknown = await response.json().catch(() => null);
+    return { status: response.status, ok: response.ok, payload };
+  });
+}
+
+/** Читает тело изображения под тем же дедлайном, что и заголовки. */
+async function readBytesTimed(
+  url: string,
+  init: RequestInit,
+  ms: number,
+): Promise<{ status: number; ok: boolean; contentType: string; bytes: Uint8Array }> {
+  return await timedFetch(url, init, ms, "model_timeout", async (response) => {
+    const contentType = imageContentType(response.headers.get("content-type"));
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      return { status: response.status, ok: false, contentType, bytes: new Uint8Array(0) };
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return { status: response.status, ok: true, contentType, bytes };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +579,17 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       await guardProtected(request, env, "generate");
       return await handleGenerate(request, env);
     }
+    const generationRoute = /^\/generate\/([^/]+)(\/image)?$/.exec(path);
+    if (generationRoute !== null) {
+      if (request.method !== "GET") throw methodNotAllowed("GET");
+      const taskId = readTaskId(generationRoute[1] ?? "");
+      if (generationRoute[2] === "/image") {
+        await guardProtected(request, env, "generation_image");
+        return await handleGenerationImage(taskId, request, env);
+      }
+      await guardProtected(request, env, "generation_status");
+      return await handleGenerationStatus(taskId, request, env);
+    }
     if (path === "/classify") {
       if (request.method !== "POST") throw methodNotAllowed("POST");
       await guardProtected(request, env, "classify");
@@ -536,10 +613,6 @@ function isGenerateConfigured(env: Env): boolean {
   return (env.ISKRAGEN_API_KEY?.trim().length ?? 0) > 0;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function providerBaseUrl(env: Env): string {
   return (env.ISKRAGEN_BASE_URL?.trim() || ISKRAGEN_BASE_URL).replace(/\/+$/, "");
 }
@@ -551,43 +624,78 @@ function providerModel(env: Env): string {
 /** Статусы, после которых опрашивать бессмысленно: задача уже провалилась. */
 const TERMINAL_FAILED_STATUSES = new Set(["FAILED", "REFUNDED", "CANCELLED", "ENQUEUE_FAILED"]);
 
-interface GenerationResult {
-  bytes: Uint8Array;
-  contentType: string;
+/** Статусы, в которых задача ещё идёт. */
+const ACTIVE_STATUSES = new Set(["PENDING", "PROCESSING"]);
+
+/** Задача генерации у провайдера: её id, статус и удержанная стоимость. */
+interface GenerationTask {
+  id: string;
+  status: string;
   costRub: number | null;
 }
 
+/** Максимум символов `Idempotency-Key`: ограничение провайдера (1–64). */
+const MAX_IDEMPOTENCY_KEY_CHARS = 64;
+const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]+$/;
+
 /**
- * Создаёт задачу и ждёт результат. Провайдер асинхронный, поэтому здесь
- * последовательность: POST → polling → download. Клиент видит один ответ.
+ * Разбирает `idempotencyKey` из тела. Ключ необязателен (старые клиенты),
+ * но заданный обязан быть безопасной строкой: он уйдёт провайдеру заголовком.
  */
-async function generateViaProvider(
+function readIdempotencyKey(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new HttpError(400, "invalid_input", "Поле idempotencyKey должно быть строкой");
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.length > MAX_IDEMPOTENCY_KEY_CHARS || !IDEMPOTENCY_KEY_PATTERN.test(trimmed)) {
+    throw new HttpError(
+      400,
+      "invalid_input",
+      `Поле idempotencyKey: от 1 до ${MAX_IDEMPOTENCY_KEY_CHARS} символов [A-Za-z0-9._:-]`,
+    );
+  }
+  return trimmed;
+}
+
+/**
+ * Ставит задачу у провайдера и сразу возвращает её id (ADR-0006, раздел 3):
+ * ни статус, ни файл здесь не ждём — их клиент забирает сам.
+ *
+ * `Idempotency-Key` пробрасывается как есть: повторный `POST` с тем же ключом
+ * возвращает существующую задачу без повторного списания, поэтому потерянный
+ * ответ (обрыв сети, закрытая вкладка) не стоит второй оплаты.
+ */
+async function createGeneration(
   apiKey: string,
   env: Env,
   prompt: string,
   model: ImageModel,
   inputUrl: string | null = null,
-): Promise<GenerationResult> {
+  idempotencyKey?: string,
+): Promise<GenerationTask> {
   const base = providerBaseUrl(env);
-  // Один общий дедлайн на POST + polling + download: клиент не должен ждать
-  // дольше, чем мы обещаем, а воркер — висеть после ухода клиента.
-  const deadline = Date.now() + GENERATE_TIMEOUT_MS;
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    authorization: `Bearer ${apiKey}`,
+  };
+  if (idempotencyKey !== undefined) headers["Idempotency-Key"] = idempotencyKey;
 
-  let created: Response;
+  let reply: ProviderJson;
   try {
-    created = await fetchWithTimeout(
+    reply = await readJsonTimed(
       `${base}/generations`,
       {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+        headers,
         body: JSON.stringify({
           modelSlug: model.slug,
           prompt,
           params: generationParams(model, inputUrl),
         }),
       },
-      timeoutUntil(deadline),
-      "model_timeout",
+      IMAGE_DOWNLOAD_TIMEOUT_MS,
     );
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -595,47 +703,18 @@ async function generateViaProvider(
     throw new HttpError(502, "model_error", "Сервис генерации недоступен");
   }
 
-  if (!created.ok) throw generationUpstreamError(created.status, "create");
+  if (!reply.ok) throw generationUpstreamError(reply.status, "create");
 
-  const payload = await created.json().catch(() => null);
+  const payload = reply.payload;
   const id = isRecord(payload) && typeof payload.id === "string" ? payload.id : "";
   if (id.length === 0) {
     console.error("[tidy-api] generate: провайдер не вернул id задачи");
     throw new HttpError(502, "model_error", "Сервис генерации вернул некорректный ответ");
   }
-  let costRub = isRecord(payload) && typeof payload.costRub === "number" ? payload.costRub : null;
-  let status = isRecord(payload) && typeof payload.status === "string" ? payload.status : "PENDING";
-
-  while (status === "PENDING" || status === "PROCESSING") {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) {
-      console.error(`[tidy-api] generate: задача ${id} не завершилась за ${GENERATE_TIMEOUT_MS} мс`);
-      throw new HttpError(504, "model_timeout", "Генерация не завершилась за отведённое время");
-    }
-    await sleep(Math.min(GENERATE_POLL_INTERVAL_MS, remaining));
-
-    const state = await fetchGenerationState(base, apiKey, id, deadline);
-    status = state.status;
-    if (state.costRub !== null) costRub = state.costRub;
-  }
-
-  if (status !== "SUCCEEDED") {
-    const known = TERMINAL_FAILED_STATUSES.has(status) ? status : "UNKNOWN";
-    console.error(`[tidy-api] generate: задача ${id} завершилась статусом ${known}`);
-    throw new HttpError(502, "model_error", "Сервис не смог сгенерировать изображение");
-  }
-
-  const downloaded = await downloadResult(base, apiKey, id, deadline);
-  return { ...downloaded, costRub };
-}
-
-/** Сколько осталось до общего дедлайна; истёк — 504, а не бесконечное ожидание. */
-function timeoutUntil(deadline: number): number {
-  const remaining = deadline - Date.now();
-  if (remaining <= 0) {
-    throw new HttpError(504, "model_timeout", "Генерация не завершилась за отведённое время");
-  }
-  return Math.min(IMAGE_DOWNLOAD_TIMEOUT_MS, remaining);
+  const status =
+    isRecord(payload) && typeof payload.status === "string" ? payload.status : "PENDING";
+  const costRub = isRecord(payload) && typeof payload.costRub === "number" ? payload.costRub : null;
+  return { id, status, costRub };
 }
 
 /**
@@ -679,13 +758,12 @@ async function uploadInputFile(
   const form = new FormData();
   form.append("file", new Blob([bytes], { type: mimeType }), referenceFileName(mimeType));
 
-  let response: Response;
+  let reply: ProviderJson;
   try {
-    response = await fetchWithTimeout(
+    reply = await readJsonTimed(
       `${base}/files/`,
       { method: "POST", headers: { authorization: `Bearer ${apiKey}` }, body: form },
       IMAGE_DOWNLOAD_TIMEOUT_MS,
-      "model_timeout",
     );
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -693,9 +771,9 @@ async function uploadInputFile(
     throw new HttpError(502, "model_error", "Сервис генерации недоступен");
   }
 
-  if (!response.ok) throw generationUpstreamError(response.status, "upload");
+  if (!reply.ok) throw generationUpstreamError(reply.status, "upload");
 
-  const payload = await response.json().catch(() => null);
+  const payload = reply.payload;
   const url = isRecord(payload) && typeof payload.url === "string" ? payload.url : "";
   if (url.length === 0) {
     console.error("[tidy-api] generate: провайдер не вернул url загруженного файла");
@@ -712,19 +790,19 @@ function decodeBase64Bytes(base64: string): Uint8Array {
   return bytes;
 }
 
+/** Текущий статус задачи у провайдера. Опрашивается клиентом, не воркером. */
 async function fetchGenerationState(
   base: string,
   apiKey: string,
   id: string,
-  deadline: number,
+  timeoutMs: number,
 ): Promise<{ status: string; costRub: number | null }> {
-  let response: Response;
+  let reply: ProviderJson;
   try {
-    response = await fetchWithTimeout(
+    reply = await readJsonTimed(
       `${base}/generations/${encodeURIComponent(id)}`,
       { headers: { authorization: `Bearer ${apiKey}` } },
-      timeoutUntil(deadline),
-      "model_timeout",
+      timeoutMs,
     );
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -732,9 +810,9 @@ async function fetchGenerationState(
     throw new HttpError(502, "model_error", "Сервис генерации недоступен");
   }
 
-  if (!response.ok) throw generationUpstreamError(response.status, "poll");
+  if (!reply.ok) throw generationUpstreamError(reply.status, "poll");
 
-  const payload = await response.json().catch(() => null);
+  const payload = reply.payload;
   if (!isRecord(payload) || typeof payload.status !== "string") {
     throw new HttpError(502, "model_error", "Сервис генерации вернул некорректный ответ");
   }
@@ -744,19 +822,24 @@ async function fetchGenerationState(
   };
 }
 
+/** Байты готового результата; отдельный запрос, а не тело статуса. */
 async function downloadResult(
   base: string,
   apiKey: string,
   id: string,
-  deadline: number,
+  timeoutMs: number,
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
-  let response: Response;
+  let reply: {
+    status: number;
+    ok: boolean;
+    contentType: string;
+    bytes: Uint8Array;
+  };
   try {
-    response = await fetchWithTimeout(
+    reply = await readBytesTimed(
       `${base}/generations/${encodeURIComponent(id)}/download?index=0`,
       { headers: { authorization: `Bearer ${apiKey}` } },
-      timeoutUntil(deadline),
-      "model_timeout",
+      timeoutMs,
     );
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -764,15 +847,15 @@ async function downloadResult(
     throw new HttpError(502, "model_error", "Не удалось скачать готовое изображение");
   }
 
-  if (!response.ok) throw generationUpstreamError(response.status, "download");
+  if (!reply.ok) throw generationUpstreamError(reply.status, "download");
 
-  const contentType = imageContentType(response.headers.get("content-type"));
+  const contentType = reply.contentType;
   if (contentType.length === 0) {
     console.error("[tidy-api] generate: провайдер вернул не изображение");
     throw new HttpError(502, "model_error", "Сервис генерации вернул не изображение");
   }
 
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = reply.bytes;
   if (bytes.length === 0) {
     throw new HttpError(502, "model_error", "Сервис генерации вернул пустое изображение");
   }
@@ -797,6 +880,11 @@ function generationUpstreamError(
   stage: "create" | "poll" | "download" | "upload",
 ): HttpError {
   console.error(`[tidy-api] generate: провайдер ${stage} ответил ${status}`);
+  // 404 только у поллинга/скачивания: задача провайдера неизвестна (истекла
+  // или чужой id) — это «не найдено», а не сбой шлюза.
+  if (status === 404 && (stage === "poll" || stage === "download")) {
+    return new HttpError(404, "not_found", "Задача генерации не найдена");
+  }
   if (status === 402) return new HttpError(402, "billing", "Закончился баланс генерации");
   if (status === 429) {
     return new HttpError(429, "rate_limited", "Сервис генерации ограничил частоту запросов");
@@ -868,17 +956,19 @@ async function readCatalogPrices(env: Env): Promise<Map<string, number>> {
   const headers: Record<string, string> = {};
   if (apiKey) headers.authorization = `Bearer ${apiKey}`;
 
-  const response = await fetchWithTimeout(
-    `${providerBaseUrl(env)}/catalog/`,
-    { headers },
-    MODELS_TIMEOUT_MS,
-    "model_timeout",
-  );
-  if (!response.ok) {
+  let reply: ProviderJson;
+  try {
+    reply = await readJsonTimed(`${providerBaseUrl(env)}/catalog/`, { headers }, MODELS_TIMEOUT_MS);
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    console.error(`[tidy-api] models: каталог недоступен: ${shortError(error)}`);
+    throw new HttpError(502, "model_error", "Каталог моделей недоступен");
+  }
+  if (!reply.ok) {
     throw new HttpError(502, "model_error", "Каталог моделей недоступен");
   }
 
-  const payload: unknown = await response.json().catch(() => null);
+  const payload: unknown = reply.payload;
   const prices = new Map<string, number>();
   if (!isRecord(payload) || !Array.isArray(payload.models)) return prices;
   for (const item of payload.models) {
@@ -977,6 +1067,9 @@ async function handleGenerate(request: Request, env: Env): Promise<Response> {
   }
 
   const model = selectImageModel(body.model, env, hasInputImage);
+  // Ключ идемпотентности валидируем до оплачиваемых шагов: неверный ключ —
+  // это 400, а не «провайдер отклонил заголовок».
+  const idempotencyKey = readIdempotencyKey(body.idempotencyKey);
 
   const apiKey = env.ISKRAGEN_API_KEY?.trim();
   if (!apiKey) {
@@ -984,27 +1077,119 @@ async function handleGenerate(request: Request, env: Env): Promise<Response> {
   }
 
   const started = Date.now();
-  // Успешная загрузка референса сдвигает точку невозврата: задача уже оплачена
-  // провайдеру частичным ресурсом, поэтому загрузка идёт до всего пайплайна.
+  // Успешная загрузка референса сдвигает точку невозврата: файл уже у провайдера,
+  // поэтому загрузка идёт до создания задачи.
   const inputUrl =
     inputImage === null
       ? null
       : await uploadInputFile(apiKey, env, inputImage.bytes, inputImage.mime);
-  const result = await generateViaProvider(apiKey, env, rawPrompt, model, inputUrl);
+  const task = await createGeneration(apiKey, env, rawPrompt, model, inputUrl, idempotencyKey);
   console.log(
-    `[tidy-api] POST /generate → 200, ${result.bytes.length} байт, ` +
+    `[tidy-api] POST /generate → 202, задача ${task.id}, ` +
       `модель ${model.slug}, ${Date.now() - started} мс, ` +
-      `стоимость ${result.costRub ?? "?"} ₽, промпт ${promptChars} символов` +
-      `${inputUrl === null ? "" : ", i2i-референс загружен"}`,
+      `статус ${task.status}, стоимость ${task.costRub ?? "?"} ₽, ` +
+      `промпт ${promptChars} символов` +
+      `${inputUrl === null ? "" : ", i2i-референс загружен"}` +
+      `${idempotencyKey === undefined ? "" : ", ключ задан"}`,
   );
 
-  return new Response(result.bytes, {
+  return jsonResponse(
+    202,
+    { taskId: task.id, status: task.status, costRub: task.costRub, model: model.slug },
+    request,
+    env,
+    {
+      "x-tidy-model": model.slug,
+      ...(task.costRub === null ? {} : { "x-tidy-cost-rub": String(task.costRub) }),
+    },
+  );
+}
+
+/** Валидирует `taskId` из пути: он уходит провайдеру в URL без кодирования-сюрпризов. */
+function readTaskId(raw: string): string {
+  let taskId: string;
+  try {
+    taskId = decodeURIComponent(raw);
+  } catch {
+    throw new HttpError(400, "invalid_input", "Некорректный идентификатор задачи");
+  }
+  if (taskId.length === 0 || taskId.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(taskId)) {
+    throw new HttpError(400, "invalid_input", "Некорректный идентификатор задачи");
+  }
+  return taskId;
+}
+
+function requireGenerateKey(env: Env): string {
+  const apiKey = env.ISKRAGEN_API_KEY?.trim();
+  if (!apiKey) {
+    throw new HttpError(503, "not_configured", "Генерация недоступна: не настроен ключ ISKRAGEN_API_KEY");
+  }
+  return apiKey;
+}
+
+/**
+ * Статус задачи для авто-опроса клиента. Возвращает статус провайдера как есть
+ * (`PENDING`/`PROCESSING`/`SUCCEEDED`/`FAILED`) и удержанную стоимость.
+ */
+async function handleGenerationStatus(
+  taskId: string,
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const apiKey = requireGenerateKey(env);
+  const state = await fetchGenerationState(
+    providerBaseUrl(env),
+    apiKey,
+    taskId,
+    GENERATE_STATUS_TIMEOUT_MS,
+  );
+  console.log(
+    `[tidy-api] GET /generate/${taskId} → 200, статус ${state.status}, ` +
+      `стоимость ${state.costRub ?? "?"} ₽`,
+  );
+  return jsonResponse(
+    200,
+    { taskId, status: state.status, costRub: state.costRub },
+    request,
+    env,
+    state.costRub === null ? {} : { "x-tidy-cost-rub": String(state.costRub) },
+  );
+}
+
+/**
+ * Байты готовой картинки. Отдельный запрос от статуса (ADR-0006): файл не
+ * должен висеть в теле опроса, который клиент дёргает каждые ~3 с.
+ * До `SUCCEEDED` — 409 `not_ready`: это не ошибка сервиса, а ранний запрос.
+ */
+async function handleGenerationImage(
+  taskId: string,
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const apiKey = requireGenerateKey(env);
+  const base = providerBaseUrl(env);
+  const state = await fetchGenerationState(base, apiKey, taskId, GENERATE_STATUS_TIMEOUT_MS);
+  if (state.status !== "SUCCEEDED") {
+    if (TERMINAL_FAILED_STATUSES.has(state.status)) {
+      throw new HttpError(409, "not_ready", "Генерация не удалась — изображение не появится");
+    }
+    if (!ACTIVE_STATUSES.has(state.status)) {
+      throw new HttpError(409, "not_ready", `Неизвестный статус задачи: ${state.status}`);
+    }
+    throw new HttpError(409, "not_ready", "Изображение ещё не готово");
+  }
+
+  const downloaded = await downloadResult(base, apiKey, taskId, IMAGE_DOWNLOAD_TIMEOUT_MS);
+  console.log(
+    `[tidy-api] GET /generate/${taskId}/image → 200, ${downloaded.bytes.length} байт, ` +
+      `стоимость ${state.costRub ?? "?"} ₽`,
+  );
+  return new Response(downloaded.bytes, {
     status: 200,
     headers: {
-      "content-type": result.contentType,
+      "content-type": downloaded.contentType,
       "cache-control": "no-store",
-      "x-tidy-model": model.slug,
-      ...(result.costRub === null ? {} : { "x-tidy-cost-rub": String(result.costRub) }),
+      ...(state.costRub === null ? {} : { "x-tidy-cost-rub": String(state.costRub) }),
       ...corsHeaders(request, env),
     },
   });
@@ -1076,9 +1261,9 @@ async function callVisionModel(apiKey: string, base64: string, mimeType: string)
     stream: false,
   };
 
-  let response: Response;
+  let reply: ProviderJson;
   try {
-    response = await fetchWithTimeout(
+    reply = await readJsonTimed(
       `${VISION_BASE_URL}/chat/completions`,
       {
         method: "POST",
@@ -1090,7 +1275,6 @@ async function callVisionModel(apiKey: string, base64: string, mimeType: string)
         body: JSON.stringify(payload),
       },
       CLASSIFY_TIMEOUT_MS,
-      "model_timeout",
     );
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -1098,15 +1282,13 @@ async function callVisionModel(apiKey: string, base64: string, mimeType: string)
     throw new HttpError(502, "model_error", "Сервис распознавания недоступен");
   }
 
-  if (!response.ok) {
-    console.error(`[tidy-api] classify upstream status ${response.status}`);
-    throw new HttpError(502, "model_error", `Сервис распознавания вернул ошибку (${response.status})`);
+  if (!reply.ok) {
+    console.error(`[tidy-api] classify upstream status ${reply.status}`);
+    throw new HttpError(502, "model_error", `Сервис распознавания вернул ошибку (${reply.status})`);
   }
 
-  let json: unknown;
-  try {
-    json = (await response.json()) as unknown;
-  } catch {
+  const json: unknown = reply.payload;
+  if (json === null) {
     console.error("[tidy-api] classify: некорректный JSON от провайдера");
     throw new HttpError(502, "model_error", "Сервис распознавания вернул некорректный ответ");
   }

@@ -8,6 +8,7 @@ import { buildGenerationPrompt } from '../domain/prompt-templates'
 import { DB_NAME, closeDb } from '../storage/db'
 import * as images from '../storage/images'
 import * as items from '../storage/items'
+import { loadJob } from '../storage/jobs'
 import {
   digitizeAuto,
   digitizeItem,
@@ -80,10 +81,9 @@ describe('Оцифровка (T10)', () => {
     await deleteDB(DB_NAME)
   })
 
-  it('успешная оцифровка создаёт роль ai и не меняет Оригинал', async () => {
+  it('успешная оцифровка создаёт роль ai и удаляет сырьевой снимок (ADR-0006)', async () => {
     await items.create(makeItem({ id: 'вещь-1', idИзображений: ['ор-1'] }))
     await images.addOriginal(makeImage('ор-1', 'вещь-1', 'оригинал', 'оригинал-байты'))
-    const оригиналДо = await images.get('ор-1')
 
     const generate = vi.fn(async () => new Blob(['ai-байты'], { type: 'image/jpeg' }))
     const outcome = await digitizeItem('вещь-1', {
@@ -97,15 +97,26 @@ describe('Оцифровка (T10)', () => {
     expect(ai?.роль).toBe('ai')
     expect(ai?.ширина).toBe(1024)
 
-    // Оригинал не перезаписан и не удалён: та же запись, тот же id и роль.
-    const оригинал = await images.get('ор-1')
-    expect(оригинал).toEqual(оригиналДо)
-    expect(оригинал?.роль).toBe('оригинал')
-    expect((await images.listByItem('вещь-1')).filter((i) => i.роль === 'оригинал')).toHaveLength(1)
+    // Загруженный снимок — сырьё: после успеха он удаляется (ADR-0006 §4),
+    // в галерее вещи остаётся одна AI-версия.
+    expect(await images.get('ор-1')).toBeUndefined()
+    expect((await images.listByItem('вещь-1')).filter((i) => i.роль === 'оригинал')).toHaveLength(0)
 
-    // Производное изображение дописано в вещь, но сама вещь не потеряна.
+    // Список изображений вещи ведёт себя честно: только новая AI-версия.
     const вещь = await items.get('вещь-1')
-    expect(вещь?.idИзображений).toEqual(['ор-1', 'ai-1'])
+    expect(вещь?.idИзображений).toEqual(['ai-1'])
+  })
+
+  it('вещь из маркетплейса хранит Оригинал: удаляется только загруженный снимок', async () => {
+    await items.create(makeItem({ id: 'с-листа', источник: 'ссылка', idИзображений: ['ор-1'] }))
+    await images.addOriginal(makeImage('ор-1', 'с-листа', 'оригинал', 'wb-фото'))
+
+    const generate = vi.fn(async () => new Blob(['ai'], { type: 'image/jpeg' }))
+    await digitizeItem('с-листа', { ...baseDeps(), generate, id: () => 'ai-1' })
+
+    // Для источника «ссылка» правило «Оригинал не удаляется» остаётся в силе.
+    expect(await images.get('ор-1')).toBeDefined()
+    expect((await items.get('с-листа'))?.idИзображений).toEqual(['ор-1', 'ai-1'])
   })
 
   it('промпт строится из подкатегории вещи (T11)', async () => {
@@ -171,13 +182,12 @@ describe('Оцифровка (T10)', () => {
     expect((await images.listByItem('вещь-1')).filter((i) => i.роль === 'ai')).toHaveLength(1)
   })
 
-  it('force: true перегенерирует: воркер вызывается, старая AI-версия заменяется, Оригинал не тронут', async () => {
+  it('force: true перегенерирует: старая AI-версия заменяется, снимок уходит (ADR-0006)', async () => {
     await items.create(makeItem({ id: 'вещь-1', idИзображений: ['ор-1', 'ai-old'] }))
     await images.addOriginal(makeImage('ор-1', 'вещь-1', 'оригинал', 'оригинал-байты'))
     await images.addAiVersion(
       makeImage('ai-old', 'вещь-1', 'ai', 'старая-ai', '2024-02-01T00:00:00.000Z'),
     )
-    const оригиналДо = await images.get('ор-1')
 
     const generate = vi.fn(async () => new Blob(['новая-ai'], { type: 'image/jpeg' }))
     const outcome = await digitizeItem('вещь-1', {
@@ -194,17 +204,11 @@ describe('Оцифровка (T10)', () => {
     const aiVersions = (await images.listByItem('вещь-1')).filter((i) => i.роль === 'ai')
     expect(aiVersions.map((i) => i.id)).toEqual(['ai-new'])
     expect(await images.get('ai-old')).toBeUndefined()
-    expect((await items.get('вещь-1'))?.idИзображений).toEqual(['ор-1', 'ai-new'])
 
-    // Оригинал остался той же записью с тем же id и ролью. Байты через
-    // fake-indexeddb недоступны (Blob там клонируется в пустой объект), поэтому
-    // неизменность подтверждается идентификатором, ролью и единственностью
-    // Оригинала: перегенерация его не добавляла и не удаляла.
-    const оригинал = await images.get('ор-1')
-    expect(оригинал?.id).toBe('ор-1')
-    expect(оригинал?.роль).toBe('оригинал')
-    expect(оригиналДо?.id).toBe('ор-1')
-    expect((await images.listByItem('вещь-1')).filter((i) => i.роль === 'оригинал')).toHaveLength(1)
+    // Перегенерация удаляет сырьевой снимок (источник «фото»), список изображений
+    // вещи указывает только на свежую AI-версию.
+    expect(await images.get('ор-1')).toBeUndefined()
+    expect((await items.get('вещь-1'))?.idИзображений).toEqual(['ai-new'])
   })
 
   it('force: true создаёт AI-версию, даже если её ещё не было', async () => {
@@ -314,21 +318,42 @@ describe('i2i-оцифровка (D13)', () => {
     await deleteDB(DB_NAME)
   })
 
-  it('среда без читаемого Blob деградирует в текстовую генерацию с предупреждением', async () => {
-    await items.create(makeItem({ id: 'i2i-мёртвый' }))
-    await images.addOriginal(makeImage('ор-2', 'i2i-мёртвый', 'оригинал', 'pack'))
-
+  /**
+   * Мок асинхронного контракта воркера (ADR-0006): `POST /generate` → 202 с
+   * `taskId`, `GET /generate/{id}` → сразу `SUCCEEDED`, скачивание → байты.
+   * Первый вызов в цепочке — всегда создание, по нему и судят тесты.
+   */
+  function asyncGenerationFetch() {
     const calls: Array<{ url: string; init?: RequestInit }> = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-        calls.push({ url: String(url), init })
+    const impl = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url)
+      calls.push({ url: u, init })
+      if (u.endsWith('/generate') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({ taskId: 'task-1', status: 'PENDING', costRub: 4, model: 'nano' }),
+          { status: 202, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (u.includes('/generate/task-1/image')) {
         return new Response(new Blob(['ai'], { type: 'image/jpeg' }), {
           status: 200,
           headers: { 'content-type': 'image/jpeg' },
         })
-      }),
-    )
+      }
+      return new Response(JSON.stringify({ taskId: 'task-1', status: 'SUCCEEDED', costRub: 4 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }) as unknown as typeof fetch
+    return { impl, calls }
+  }
+
+  it('среда без читаемого Blob деградирует в текстовую генерацию с предупреждением', async () => {
+    await items.create(makeItem({ id: 'i2i-мёртвый' }))
+    await images.addOriginal(makeImage('ор-2', 'i2i-мёртвый', 'оригинал', 'pack'))
+
+    const { impl, calls } = asyncGenerationFetch()
+    vi.stubGlobal('fetch', vi.fn(impl))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       await digitizeItem('i2i-мёртвый', { id: () => 'ai-new' })
@@ -341,21 +366,12 @@ describe('i2i-оцифровка (D13)', () => {
     }
   })
 
-  it('дефолтный путь шлёт redraw-промпт', async () => {
+  it('дефолтный путь шлёт redraw-промпт и сохраняет картинку после скачивания', async () => {
     await items.create(makeItem({ id: 'i2i-вещь', категория: 'Второй слой', подкатегория: 'худи' }))
     await images.addOriginal(makeImage('ор-1', 'i2i-вещь', 'оригинал', 'pack'))
 
-    const calls: Array<{ url: string; init?: RequestInit }> = []
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-        calls.push({ url: String(url), init })
-        return new Response(new Blob(['ai'], { type: 'image/jpeg' }), {
-          status: 200,
-          headers: { 'content-type': 'image/jpeg' },
-        })
-      }),
-    )
+    const { impl, calls } = asyncGenerationFetch()
+    vi.stubGlobal('fetch', vi.fn(impl))
     try {
       const outcome = await digitizeItem('i2i-вещь', { id: () => 'ai-new' })
       expect(outcome.status).toBe('создано')
@@ -366,6 +382,45 @@ describe('i2i-оцифровка (D13)', () => {
       expect(body.prompt).toContain('hoodie')
       expect(body.prompt).toContain('full garment')
       expect(body.prompt).not.toContain('colors:')
+
+      // Цепочка ADR-0006: создание → статус → скачивание отдельным запросом.
+      expect(calls.map((c) => c.url)).toEqual([
+        expect.stringContaining('/generate'),
+        expect.stringContaining('/generate/task-1'),
+        expect.stringContaining('/generate/task-1/image'),
+      ])
+      expect(await images.get('ai-new')).toBeDefined()
+      // Задача генерации после сохранения снята — висеть нечему.
+      expect(await loadJob('i2i-вещь')).toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('обрыв после 202 не теряет задачу: taskId и ключ остаются в IndexedDB', async () => {
+    await items.create(makeItem({ id: 'обрыв' }))
+    await images.addOriginal(makeImage('ор-о', 'обрыв', 'оригинал', 'pack'))
+
+    const { impl, calls } = asyncGenerationFetch()
+    // Статус падает сетью: прогон рвётся, но задача уже сохранена.
+    const flaky = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url)
+      if (!u.endsWith('/generate') || init?.method !== 'POST') {
+        throw new TypeError('Failed to fetch')
+      }
+      return impl(url, init)
+    }) as unknown as typeof fetch
+    vi.stubGlobal('fetch', vi.fn(flaky))
+
+    try {
+      const error = await digitizeItem('обрыв', { id: () => 'ai-1' }).catch((e: unknown) => e)
+      expect(error).toMatchObject({ code: 'network' })
+
+      const job = await loadJob('обрыв')
+      expect(job).toMatchObject({ idВещи: 'обрыв', статус: 'ждёт', попытка: 1 })
+      expect(job?.taskId).toBe('task-1')
+      expect((job?.ключ ?? '').length).toBeGreaterThan(0)
+      expect(calls).toHaveLength(1)
     } finally {
       vi.unstubAllGlobals()
     }

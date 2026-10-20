@@ -2,9 +2,13 @@
  * Репозиторий изображений.
  *
  * Инвариант из ADR-0002: оригинал неизменяем. Здесь нет ни метода перезаписи,
- * ни метода удаления роли `оригинал`; изображения добавляются через `add`
+ * ни общего метода удаления роли `оригинал`; изображения добавляются через `add`
  * (а не `put`), поэтому повторный `id` не затирает существующую запись.
- * Оригинал исчезает только каскадом вместе со своей вещью (`items.remove`).
+ *
+ * Единственное исключение — {@link removeUploadedOriginal} (ADR-0006): удаление
+ * загруженного снимка после успешной генерации. Оригинал с маркетплейса и
+ * оригинал безусловно остаются; в целом Оригинал исчезает и каскадом вместе со
+ * своей вещью (`items.remove`).
  */
 
 import type { ImageRole, Изображение } from '../domain/types'
@@ -48,6 +52,36 @@ export async function listByItem(idВещи: string): Promise<Изображен
   const db = await getDb()
   const images = await db.getAllFromIndex('images', 'byВещь', idВещи)
   return images.sort((a, b) => a.датаСоздания.localeCompare(b.датаСоздания))
+}
+
+/**
+ * Удаляет загруженный Оригинал-снимок — сознательное исключение из правила
+ * «оригинал неизменяем» (ADR-0006 §4). Снимок был сырьём для оцифровки: после
+ * успешной генерации в галерее остаётся одна AI-версия, а референсом следующей
+ * перегенерации служит она сама.
+ *
+ * Вызывающий код обязан проверять `вещь.источник === 'фото'`: для
+ * маркетплейсовых Оригиналов правило продолжает действовать. Роль внутри
+ * проверяется всё равно — метод умеет удалять только оригинал.
+ */
+export async function removeUploadedOriginal(id: string): Promise<void> {
+  const db = await getDb()
+  const tx = db.transaction('images', 'readwrite')
+  const store = tx.objectStore('images')
+  const изображение = await store.get(id)
+  if (изображение === undefined) {
+    await tx.done
+    throw new ОшибкаХранилища(`Изображение «${id}» не найдено`)
+  }
+  if (изображение.роль !== 'оригинал') {
+    tx.abort()
+    await tx.done.catch(() => undefined)
+    throw new ОшибкаХранилища(
+      `removeUploadedOriginal ожидает оригинал, а пришла роль «${изображение.роль}»`,
+    )
+  }
+  await store.delete(id)
+  await tx.done
 }
 
 export async function get(id: string): Promise<Изображение | undefined> {

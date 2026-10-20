@@ -212,7 +212,7 @@ describe('НЕЗАВИСИМО: сквозной путь ссылка/фото 
     await deleteDB(DB_NAME)
   })
 
-  it('проходит весь путь и сохраняет Оригиналы неизменными', async () => {
+  it('проходит весь путь; Оригинал ссылки хранится, сырые снимки уходят (ADR-0006)', async () => {
     // 1. Вещь по ссылке WB: 2 фото, пакшот — второе. Сеть замокана.
     const fetchImpl = wbNet({
       card: () => cardJson(),
@@ -311,9 +311,12 @@ describe('НЕЗАВИСИМО: сквозной путь ссылка/фото 
     expect(очередь.progress).toMatchObject({ всего: 4, успехов: 4, ошибок: 0, осталось: 0 })
     expect(generate).toHaveBeenCalledTimes(4)
 
-    // Оригиналы всех пяти не тронуты, у B–E появились AI-версии, у A — вырез.
-    for (const { вещь, оригинал } of все) {
-      expect(await images.get(оригинал.id)).toEqual(снимкиДо.get(вещь.id))
+    // A — из ссылки: Оригинал хранится (ADR-0006 §4 касается только «фото»).
+    expect(await images.get(A.оригинал.id)).toEqual(снимкиДо.get(A.вещь.id))
+    // У B–E сырые снимки удалены после успеха — остались только AI-версии.
+    for (const { вещь, оригинал } of [B, C, D, E]) {
+      expect(await images.get(оригинал.id)).toBeUndefined()
+      expect((await items.get(вещь.id))?.idИзображений).toHaveLength(1)
     }
     for (const { вещь } of [B, C, D, E]) {
       const роли = (await images.listByItem(вещь.id)).map((i) => i.роль)
@@ -813,20 +816,33 @@ describe('НАЙДЕННЫЕ ДЕФЕКТЫ (регресс-тесты: дефе
     fireEvent.click(карточкаСетки)
 
     // Ожидание: открылась карточка вещи (её уникальная кнопка).
-    expect(await screen.findByRole('button', { name: 'Сделать AI-версию' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /^Сделать AI-версию · \d+ ₽$/ })).toBeInTheDocument()
   })
 
   it('ДЕФЕКТ 2 (исправлено): «Перегенерировать» реально запрашивает новую AI-версию', async () => {
     await seedItem('в')
     await images.addAiVersion(makeImage('ai-старый', 'в', 'ai', 'old', iso(0)))
 
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(new Blob(['jpeg-bytes'], { type: 'image/jpeg' }), {
+    // Асинхронный контракт воркера (ADR-0006): 202 → статус → скачивание.
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url)
+      if (u.endsWith('/generate') && init?.method === 'POST') {
+        return new Response(
+          JSON.stringify({ taskId: 'task-e2e', status: 'PENDING', costRub: 4, model: 'nano' }),
+          { status: 202, headers: { 'content-type': 'application/json' } },
+        )
+      }
+      if (u.includes('/generate/task-e2e/image')) {
+        return new Response(new Blob(['jpeg-bytes'], { type: 'image/jpeg' }), {
           status: 200,
           headers: { 'content-type': 'image/jpeg' },
-        }),
-    )
+        })
+      }
+      return new Response(JSON.stringify({ taskId: 'task-e2e', status: 'SUCCEEDED', costRub: 4 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     render(
@@ -836,7 +852,7 @@ describe('НАЙДЕННЫЕ ДЕФЕКТЫ (регресс-тесты: дефе
     )
 
     // В карточке при наличии AI кнопка называется «Перегенерировать».
-    const кнопка = await screen.findByRole('button', { name: 'Перегенерировать' })
+    const кнопка = await screen.findByRole('button', { name: /^Перегенерировать · \d+ ₽$/ })
     fireEvent.click(кнопка)
 
     expect(screen.queryByText(/Оцифровка недоступна/)).toBeNull()
@@ -846,9 +862,11 @@ describe('НАЙДЕННЫЕ ДЕФЕКТЫ (регресс-тесты: дефе
       expect(fetchMock).toHaveBeenCalled()
     })
     // ...и AI-версия заменяется (а не плодится): ровно одна, и она новая, а не старая.
-    const ai = (await images.listByItem('в')).filter((i) => i.роль === 'ai')
-    expect(ai).toHaveLength(1)
-    expect(ai[0].id).not.toBe('ai-старый')
+    await vi.waitFor(async () => {
+      const ai = (await images.listByItem('в')).filter((i) => i.роль === 'ai')
+      expect(ai).toHaveLength(1)
+      expect(ai[0].id).not.toBe('ai-старый')
+    })
   })
 })
 

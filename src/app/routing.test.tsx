@@ -34,10 +34,12 @@ describe('Маршрутизация', () => {
     expect(await screen.findByText('Гардероб пуст')).toBeInTheDocument()
   })
 
-  it('открывает экран добавления на /add с полем ссылки', () => {
+  it('открывает экран добавления на /add с загрузкой фото (ADR-0006)', () => {
     renderAt('/add')
     expect(screen.getByRole('heading', { name: 'Добавить вещь' })).toBeInTheDocument()
-    expect(screen.getByRole('textbox', { name: 'Ссылка на товар' })).toBeInTheDocument()
+    // Вход по ссылке убран из формы: остаётся только своё фото.
+    expect(screen.getByText('Загрузить фото')).toBeInTheDocument()
+    expect(screen.queryByRole('textbox', { name: 'Ссылка на товар' })).toBeNull()
   })
 
   it('открывает экран образов на /outfits', async () => {

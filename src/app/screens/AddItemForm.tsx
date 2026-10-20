@@ -2,21 +2,26 @@ import { useEffect, useRef, useState } from 'react'
 
 import {
   ОшибкаИмпортаВещи,
-  createDraftFromLink,
   createDraftFromPhoto,
   собратьВещь,
   type ItemDraft,
 } from '../../services/import-item'
 import * as images from '../../storage/images'
 import * as items from '../../storage/items'
+import { type ЗадачаГенерации } from '../../storage/jobs'
 import { ОшибкаХранилища } from '../../storage/errors'
+import { digitizeItem } from '../../services/digitize'
+import { ОшибкаГенерации, activeGenerationRun } from '../../services/generation'
 import { ErrorNotice } from '../../ui/ErrorNotice'
+import { GenerationModelPicker } from '../../ui/GenerationModelPicker'
+import { GenerationStatus } from '../../ui/GenerationStatus'
 import { ItemPreview } from '../../ui/ItemPreview'
 import { OfflineNotice } from '../../ui/OfflineNotice'
+import { useGenerationModels } from '../../ui/useGenerationModels'
 import { useOnline } from '../../ui/useOnline'
 import styles from './AddScreen.module.css'
 
-type Phase = 'idle' | 'loading' | 'ready' | 'saving'
+type Phase = 'idle' | 'loading' | 'ready' | 'saving' | 'confirm' | 'generating'
 
 /** Понятный русский текст: свои ошибки показываем как есть, чужие — общим текстом. */
 function сообщениеОбОшибке(error: unknown): string {
@@ -39,28 +44,34 @@ function PreviewSkeleton() {
 }
 
 interface AddItemFormProps {
-  /** Вызывается после успешной записи Вещи и её Оригинала в хранилище. */
+  /** Вызывается после успешной записи Вещи — сразу или после AI-версии. */
   onSaved: () => void
 }
 
 /**
- * Форма добавления вещи (T8): два входа — по ссылке Wildberries и по своему фото.
- * Категорию по ссылке даёт словарь WB, по фото — vision-модель; её всегда можно
- * поправить. Ни одно поле не обязательно — нужен только сам Оригинал.
+ * Форма добавления вещи (T8 + ADR-0006): вход по своему фото. Категорию даёт
+ * vision-модель, её всегда можно поправить. Ни одно поле не обязательно —
+ * нужен только сам Оригинал.
  *
- * Компонент не знает о маршрутизации: экран добавления (`/add`) и пустой гардероб
- * (`/`) переиспользуют его, каждый по-своему реагируя на `onSaved`. Логика импорта
- * и записи в IndexedDB живёт здесь в одном месте и не дублируется.
+ * Ссылочный вход из формы убран (ADR-0006 §1), модуль импорта WB при этом
+ * остался: он обслуживает разбор уже сохранённых ссылок.
+ *
+ * Генерация — только по нажатию и только после подтверждения: вещь сначала
+ * сохраняется (её видно в гардеробе), затем блок «Сделать AI-версию · N ₽» или
+ * «Добавить без AI-версии». `onSaved` зовётся в конце любого из двух путей.
  */
 export function AddItemForm({ onSaved }: AddItemFormProps) {
-  const [ссылка, setСсылка] = useState('')
   const [черновик, setЧерновик] = useState<ItemDraft | null>(null)
+  const [сохранённыйId, setСохранённыйId] = useState<string | null>(null)
+  const [задача, setЗадача] = useState<ЗадачаГенерации | null>(null)
   const [фаза, setФаза] = useState<Phase>('idle')
   const [ошибка, setОшибка] = useState<string | null>(null)
   const retryRef = useRef<(() => void) | null>(null)
   const controllerRef = useRef<AbortController | null>(null)
   const mountedRef = useRef(true)
   const online = useOnline()
+  const { models: моделиГенерации, selected: выбраннаяМодель, select: выбратьМодель } =
+    useGenerationModels()
 
   // Уход с экрана действительно прекращает загрузку: без этого подвисшее
   // соединение продолжало бы тянуть фото в никуда после размонтирования.
@@ -72,7 +83,7 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
     }
   }, [])
 
-  const busy = фаза === 'loading' || фаза === 'saving'
+  const busy = фаза === 'loading' || фаза === 'saving' || фаза === 'generating'
 
   function повторить() {
     retryRef.current?.()
@@ -84,27 +95,6 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
     const controller = new AbortController()
     controllerRef.current = controller
     return controller
-  }
-
-  async function загрузитьПоСсылке() {
-    setОшибка(null)
-    setЧерновик(null)
-    setФаза('loading')
-    retryRef.current = () => {
-      void загрузитьПоСсылке()
-    }
-    const controller = начатьЗагрузку()
-    try {
-      const draft = await createDraftFromLink(ссылка, { signal: controller.signal })
-      if (controller.signal.aborted || !mountedRef.current) return
-      setЧерновик(draft)
-      setФаза('ready')
-    } catch (error) {
-      // Отмена (уход с экрана или новая попытка) — не показываем как ошибку.
-      if (controller.signal.aborted || !mountedRef.current) return
-      setОшибка(сообщениеОбОшибке(error))
-      setФаза('idle')
-    }
   }
 
   async function загрузитьПоФото(file: File) {
@@ -132,7 +122,7 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
     setОшибка(null)
     setФаза('saving')
     // «Повторить» после ошибки сохранения повторяет именно запись, а не тянет
-    // ссылку/фото заново: данные уже загружены и лежат в черновике.
+    // фото заново: данные уже загружены и лежат в черновике.
     retryRef.current = () => {
       void сохранить()
     }
@@ -146,7 +136,9 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
         await items.remove(вещь.id).catch(() => undefined)
         throw cause
       }
-      onSaved()
+      // Вещь уже в гардеробе. Генерация — отдельный шаг с подтверждением.
+      setСохранённыйId(вещь.id)
+      setФаза('confirm')
     } catch (error) {
       if (!mountedRef.current) return
       setОшибка(сообщениеОбОшибке(error))
@@ -154,62 +146,61 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
     }
   }
 
+  async function запуститьГенерацию(id: string, force = false) {
+    setОшибка(null)
+    setФаза('generating')
+    retryRef.current = () => {
+      void запуститьГенерацию(id, force)
+    }
+    try {
+      await digitizeItem(id, {
+        force,
+        model: выбраннаяМодель.slug,
+        onJobChange: (job) => setЗадача(job),
+      })
+      setЗадача(null)
+      onSaved()
+    } catch (error) {
+      if (!mountedRef.current) return
+      if (error instanceof ОшибкаГенерации) {
+        // Судьбу задачи показывает GenerationStatus: «просрочена» (taskId жив,
+        // «Повторить» допросит ту же задачу) или «не удалось» (новая попытка).
+        return
+      }
+      setОшибка(сообщениеОбОшибке(error))
+      setФаза('confirm')
+    }
+  }
+
   return (
     <>
-      <p className={styles.lead}>Вставьте ссылку с Wildberries или загрузите своё фото.</p>
+      <p className={styles.lead}>Загрузите фото вещи — категорию определим автоматически.</p>
 
       {!online && <OfflineNotice />}
 
-      <form
-        className={styles.linkForm}
-        onSubmit={(event) => {
-          event.preventDefault()
-          void загрузитьПоСсылке()
-        }}
-      >
-        <input
-          className={styles.input}
-          type="url"
-          inputMode="url"
-          autoComplete="off"
-          placeholder="Ссылка на товар с Wildberries"
-          aria-label="Ссылка на товар"
-          value={ссылка}
-          onChange={(event) => setСсылка(event.target.value)}
-          disabled={busy}
-        />
-        <button className={styles.submit} type="submit" disabled={busy || ссылка.trim() === ''}>
-          Найти вещь
-        </button>
-      </form>
-
-      <div className={styles.orGroup}>
-        <span className={styles.orLine} aria-hidden="true" />
-        <span className={styles.orText}>или</span>
-        <span className={styles.orLine} aria-hidden="true" />
-      </div>
-
-      <label className={styles.fileButton}>
-        Загрузить фото
-        <input
-          className={styles.fileInput}
-          type="file"
-          accept="image/*"
-          disabled={busy}
-          onChange={(event) => {
-            const file = event.target.files?.[0]
-            // Сброс значения: повторный выбор того же файла снова поднимет change.
-            event.target.value = ''
-            if (file !== undefined) void загрузитьПоФото(file)
-          }}
-        />
-      </label>
+      {фаза !== 'confirm' && фаза !== 'generating' && (
+        <label className={styles.fileButton}>
+          Загрузить фото
+          <input
+            className={styles.fileInput}
+            type="file"
+            accept="image/*"
+            disabled={busy}
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              // Сброс значения: повторный выбор того же файла снова поднимет change.
+              event.target.value = ''
+              if (file !== undefined) void загрузитьПоФото(file)
+            }}
+          />
+        </label>
+      )}
 
       {ошибка !== null && (
         <ErrorNotice message={ошибка} onRetry={retryRef.current === null ? undefined : повторить} />
       )}
       {фаза === 'loading' && <PreviewSkeleton />}
-      {фаза !== 'loading' && черновик !== null && (
+      {(фаза === 'ready' || фаза === 'saving') && черновик !== null && (
         <ItemPreview
           черновик={черновик}
           saving={фаза === 'saving'}
@@ -222,6 +213,62 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
             void сохранить()
           }}
         />
+      )}
+
+      {(фаза === 'confirm' || фаза === 'generating') && сохранённыйId !== null && (
+        <section className={styles.confirm} role="region" aria-label="AI-версия при добавлении">
+          <p className={styles.confirmTitle}>Вещь сохранена. Сделать AI-версию?</p>
+
+          {фаза === 'confirm' && (
+            <GenerationModelPicker
+              models={моделиГенерации}
+              value={выбраннаяМодель.slug}
+              onChange={выбратьМодель}
+            />
+          )}
+
+          {фаза === 'generating' && задача !== null && (
+            <GenerationStatus
+              job={задача}
+              модель={выбраннаяМодель.title}
+              цена={выбраннаяМодель.priceRub}
+              onRefresh={() => {
+                const идущий = activeGenerationRun(задача.idВещи)
+                if (идущий !== undefined) идущий.refresh()
+                else void запуститьГенерацию(сохранённыйId, true)
+              }}
+              onRetry={() => {
+                void запуститьГенерацию(сохранённыйId, true)
+              }}
+            />
+          )}
+          {фаза === 'generating' && задача === null && (
+            <p className={styles.confirmHint} role="status" aria-live="polite">
+              Готовим AI-версию…
+            </p>
+          )}
+
+          <div className={styles.confirmActions}>
+            {фаза === 'confirm' && (
+              <button
+                className={styles.confirmPrimary}
+                type="button"
+                onClick={() => {
+                  void запуститьГенерацию(сохранённыйId)
+                }}
+              >
+                Сделать AI-версию · {выбраннаяМодель.priceRub} ₽
+              </button>
+            )}
+            <button
+              className={фаза === 'confirm' ? styles.confirmSecondary : styles.confirmPrimary}
+              type="button"
+              onClick={onSaved}
+            >
+              Добавить без AI-версии
+            </button>
+          </div>
+        </section>
       )}
     </>
   )

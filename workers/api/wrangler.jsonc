@@ -7,9 +7,9 @@
   "observability": {
     "enabled": true
   },
-  // Cloudflare Workers Rate Limiting. Два правила: генерация и классификация.
-  // namespace_id — числа, уникальные в пределах аккаунта; limit/period — запросы в секунды.
-  // Генерация платная (7 ₽ за кадр), поэтому лимит ниже, чем у классификации.
+  // Cloudflare Workers Rate Limiting. namespace_id — числа, уникальные в пределах
+  // аккаунта; limit/period — запросы в секунды. Генерация платная (5 ₽/кадр), поэтому
+  // создание жёстко ограничено; статус и скачивание дешёвые, но опрашиваются каждые ~3 с.
   "ratelimits": [
     {
       "name": "GENERATE_RATE_LIMITER",
@@ -25,6 +25,16 @@
       "name": "MODELS_RATE_LIMITER",
       "namespace_id": "1003",
       "simple": { "limit": 20, "period": 60 }
+    },
+    {
+      "name": "GENERATION_STATUS_RATE_LIMITER",
+      "namespace_id": "1004",
+      "simple": { "limit": 60, "period": 60 }
+    },
+    {
+      "name": "GENERATION_IMAGE_RATE_LIMITER",
+      "namespace_id": "1005",
+      "simple": { "limit": 10, "period": 60 }
     }
   ],
   "vars": {

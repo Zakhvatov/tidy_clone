@@ -82,35 +82,23 @@ class FakeOffscreenCanvas {
   }
 }
 
-/** Минимальная сеть для онбординга: карточка WB и одно фото. */
-function onboardingFetch(): typeof fetch {
+/** Мок сети классификации фото (ссылочный вход убран, ADR-0006). */
+function classifyFetch(категория: string, подкатегория: string): typeof fetch {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input)
-    const json = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      })
-    if (url.endsWith('/info/ru/card.json')) {
-      return json({
-        nm_id: 16020837,
-        imt_name: 'Худи тестовое',
-        subj_name: 'Худи',
-        subj_root_name: 'Одежда',
-        nm_colors_names: 'чёрный',
-        selling: { brand_name: 'Тестовый бренд' },
-        media: { photo_count: 1 },
-        options: [{ name: 'Состав', value: 'хлопок' }],
-      })
-    }
-    if (url.includes('/info/sellers.json')) return json({ supplierName: 'ООО Тест' })
-    if (url.includes('/images/big/')) {
-      return new Response(new Uint8Array([0x70, 0x68, 0x6f, 0x74, 0x6f]), {
-        headers: { 'content-type': 'image/webp' },
-      })
+    if (url.endsWith('/classify')) {
+      return new Response(
+        JSON.stringify({ category: категория, subcategory: подкатегория, confidence: 0.9 }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
     }
     return new Response('not found', { status: 404 })
   }) as unknown as typeof fetch
+}
+
+/** jsdom не даёт input.files напрямую — подсовываем File через change-событие. */
+function uploadPhoto(input: HTMLInputElement, имя: string) {
+  fireEvent.change(input, { target: { files: [new File(['image-bytes'], имя, { type: 'image/jpeg' })] } })
 }
 
 function renderWardrobe() {
@@ -167,31 +155,29 @@ describe('Экран гардероба (T13)', () => {
     await deleteDB(DB_NAME)
   })
 
-  it('пустой гардероб: на / сама форма добавления (O7), добавление кладёт вещь в сетку', async () => {
-    vi.stubGlobal('fetch', onboardingFetch())
-    // Canvas в jsdom недоступен: анализ пакшота просто не срабатывает, без шума.
+  it('пустой гардероб: на / сама форма добавления (O7), фото кладёт вещь в сетку', async () => {
+    // ADR-0006: вход по ссылке убран — на / только загрузка своего фото.
+    vi.stubGlobal('fetch', classifyFetch('Второй слой', 'худи'))
     vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas)
     renderWardrobe()
 
     expect(await screen.findByText('Гардероб пуст')).toBeInTheDocument()
-    // O7: поле ссылки и кнопка — прямо на первом экране, без перехода на /add.
     expect(screen.queryByRole('region')).toBeNull()
-    const ссылка = await screen.findByLabelText('Ссылка на товар')
-    const кнопка = screen.getByRole('button', { name: 'Найти вещь' })
+    const фото = screen.getByLabelText('Загрузить фото') as HTMLInputElement
 
-    fireEvent.change(ссылка, {
-      target: { value: 'https://www.wildberries.ru/catalog/16020837/detail.aspx' },
-    })
-    fireEvent.click(кнопка)
-    expect(await screen.findByRole('heading', { name: 'Худи тестовое' })).toBeInTheDocument()
+    uploadPhoto(фото, 'фото.jpg')
+    await screen.findByRole('heading', { name: 'Без названия' })
 
     fireEvent.click(screen.getByRole('button', { name: 'Добавить в гардероб' }))
+    await screen.findByText('Вещь сохранена. Сделать AI-версию?')
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить без AI-версии' }))
 
     expect(await screen.findByRole('region', { name: 'Второй слой' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Худи тестовое' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Без названия' })).toBeInTheDocument()
     // Сетка заменила форму: поля ссылки на первом экране больше нет.
     expect(screen.queryByLabelText('Ссылка на товар')).toBeNull()
   })
+
 
   it('непустой гардероб: на / нет поля ссылки, есть сетка', async () => {
     await items.create(

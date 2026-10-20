@@ -7,12 +7,19 @@
  * расходятся молча, поэтому все сетевые детали воркера живут здесь, а
  * `classify-photo.ts` и `digitize.ts` ходят только через этот клиент.
  *
- * Контракт воркера (ADR-0003, `workers/api`):
+ * Контракт воркера (ADR-0003, ADR-0006, `workers/api`):
  *   GET  /models                              → {models:[{slug,title,priceRub}], defaultSlug}
- *   POST /generate  {prompt, model?, width?, height?, imageBase64?, mimeType?} → image/* байтами
+ *   POST /generate  {prompt, model?, imageBase64?, mimeType?, idempotencyKey?}
+ *                                          → 202 {taskId, status, costRub, model}
+ *   GET  /generate/{taskId}                  → 200 {taskId, status, costRub}
+ *   GET  /generate/{taskId}/image            → байты готовой картинки
  *   POST /classify  {imageBase64, mimeType}   → {category, subcategory, confidence}
  *   GET  /health                              → {ok, generate, classify}
  *   ошибка:                                   → {error:{code,message}}
+ *
+ * Генерация асинхронная (ADR-0006): воркер ставит задачу и сразу отвечает 202,
+ * картинку клиент забирает сам — сначала опросом статуса, затем отдельным
+ * запросом файла. Поэтому у генерации здесь три вызова, а не один.
  *
  * Секреты воркера (ключ генерации, ключ vision-провайдера) на клиент не попадают.
  * Клиентский токен — не секрет доступа к данным, а барьер от посторонних:
@@ -26,14 +33,30 @@ export const DEFAULT_API_URL = 'https://tidy-api.megabaff2011.workers.dev'
 export const DEFAULT_TIMEOUT_MS = 30_000
 
 /**
- * Таймаут генерации. Провайдер асинхронный: воркер ставит задачу, опрашивает
- * статус и скачивает файл. Держим больше воркерского предела (95 с), чтобы
- * получить его 504 с текстом, а не оборванное соединение.
+ * Таймаут создания задачи генерации: воркер успевает загрузить референс и
+ * ответить 202. Картинку этот вызов не ждёт (ADR-0006), поэтому держим больше
+ * воркерских пределов, чтобы получить его 504 с текстом, а не обрыв соединения.
  */
 export const GENERATE_TIMEOUT_MS = 120_000
 
-/** Путь генерации AI-версии. */
+/** Таймаут одного опроса статуса задачи — короткий служебный вызов. */
+export const GENERATION_STATUS_TIMEOUT_MS = 15_000
+
+/** Таймаут скачивания готового изображения (~250 КБ). */
+export const GENERATION_IMAGE_TIMEOUT_MS = 60_000
+
+/** Путь создания генерации. */
 export const GENERATE_PATH = '/generate'
+
+/** Путь статуса задачи генерации. */
+export function generationStatusPath(taskId: string): string {
+  return `${GENERATE_PATH}/${encodeURIComponent(taskId)}`
+}
+
+/** Путь скачивания готового изображения задачи. */
+export function generationImagePath(taskId: string): string {
+  return `${generationStatusPath(taskId)}/image`
+}
 
 /** Путь каталога моделей генерации. */
 export const MODELS_PATH = '/models'
@@ -58,6 +81,7 @@ export type TidyApiErrorCode =
   | 'image_too_large'
   | 'unsupported_media'
   | 'not_found'
+  | 'not_ready'
   | 'bad_request'
   | 'network'
   | 'timeout'
@@ -187,6 +211,15 @@ export async function errorFromResponse(response: Response): Promise<TidyApiErro
     return new TidyApiError('not_found', message || 'Сервис не нашёл запрошенный ресурс', {
       status: response.status,
     })
+  }
+  if (response.status === 409 || code === 'not_ready') {
+    // 409 от воркера — картинку спросили раньше времени: это не сбой сервиса,
+    // а сигнал «сейчас не готово», по нему клиент просто продолжает опрос.
+    return new TidyApiError(
+      'not_ready',
+      message || 'Изображение ещё не готово — попробуйте чуть позже',
+      { status: response.status },
+    )
   }
   if (response.status === 504 || code === 'model_timeout') {
     return new TidyApiError('timeout', message || 'Сервис не ответил вовремя', {
@@ -359,8 +392,8 @@ export function mimeTypeOf(blob: Blob): string {
 // Генерация AI-версии
 // ---------------------------------------------------------------------------
 
-/** Опции генерации: размер валидируется, но провайдер всегда рисует 1:1 / 1K. */
-export interface GenerateImageOptions extends TidyRequestOptions {
+/** Опции создания задачи генерации: размер валидируется, но провайдер всегда рисует 1:1 / 1K. */
+export interface CreateGenerationOptions extends TidyRequestOptions {
   width?: number
   height?: number
   /** Slug модели из `GET /models`. Без него воркер берёт модель по умолчанию. */
@@ -370,6 +403,12 @@ export interface GenerateImageOptions extends TidyRequestOptions {
    * проверяется здесь до сборки base64; сжатие делает вызывающий код.
    */
   image?: Blob
+  /**
+   * `Idempotency-Key` (≤64 символов, `[A-Za-z0-9._:-]`): повторный `POST` с тем
+   * же ключом возвращает уже существующую задачу у провайдера **без повторного
+   * списания** (ADR-0006). Ключ генерируется и сохраняется на клиенте до отправки.
+   */
+  idempotencyKey?: string
 }
 
 /** Форматы входного изображения, которые принимает воркер генерации. */
@@ -382,20 +421,54 @@ const GENERATE_INPUT_MIME = new Set([
   'image/tiff',
 ])
 
+/** Задача, поставленная воркером: ответ `POST /generate` со статусом 202. */
+export interface GenerationTask {
+  taskId: string
+  /** Статус на момент постановки: обычно `PENDING`, возможен сразу `SUCCEEDED`. */
+  status: string
+  costRub: number | null
+  /** Фактически выбранная воркером модель (может отличаться от запрошенной). */
+  model: string
+}
+
+/** Текущий статус задачи: `PENDING` / `PROCESSING` / `SUCCEEDED` / `FAILED`. */
+export interface GenerationStatus {
+  taskId: string
+  status: string
+  costRub: number | null
+}
+
+/** Читает ответ `POST /generate`; пустой JSON — ошибка клиента, а не undefined. */
+function readGenerationTask(body: unknown): GenerationTask {
+  if (!isRecord(body) || typeof body.taskId !== 'string' || body.taskId.length === 0) {
+    throw new TidyApiError('invalid_response', 'Сервис не вернул идентификатор задачи генерации')
+  }
+  return {
+    taskId: body.taskId,
+    status: typeof body.status === 'string' ? body.status : 'PENDING',
+    costRub: typeof body.costRub === 'number' ? body.costRub : null,
+    model: typeof body.model === 'string' ? body.model : '',
+  }
+}
+
 /**
- * Просит воркер сгенерировать каталожное изображение по промпту. Возвращает
- * `Blob` (квадратный кадр 1K; формат — тот, что отдал провайдер). Промпт строит
- * вызывающий: доменное знание о вещи не должно утекать в транспорт.
+ * Ставит задачу генерации у воркера и возвращает её `taskId` (ADR-0006).
+ * Картинка этим вызовом не ждётся: её забирают {@link getGenerationStatus} и
+ * {@link downloadGeneration}. Промпт строит вызывающий: доменное знание о вещи
+ * не должно утекать в транспорт.
  */
-export async function generateImage(
+export async function createGeneration(
   prompt: string,
-  options: GenerateImageOptions = {},
-): Promise<Blob> {
-  const { width, height, model, image, headers, timeoutMs, ...rest } = options
+  options: CreateGenerationOptions = {},
+): Promise<GenerationTask> {
+  const { width, height, model, image, idempotencyKey, headers, timeoutMs, ...rest } = options
   const payload: Record<string, unknown> = { prompt }
   if (width !== undefined) payload.width = width
   if (height !== undefined) payload.height = height
   if (model !== undefined && model.trim() !== '') payload.model = model.trim()
+  if (idempotencyKey !== undefined && idempotencyKey.trim() !== '') {
+    payload.idempotencyKey = idempotencyKey.trim()
+  }
 
   if (image !== undefined) {
     // Формат и размер проверяем до base64: чужой или огромный Blob — ошибка
@@ -416,7 +489,7 @@ export async function generateImage(
     } catch {
       // Среда не умеет читать Blob (jsdom + fake-indexeddb отдают мёртвый клон
       // без arrayBuffer и не принимают его в FileReader). Честный запасной
-      // сценарий — прежняя текстовая генерация, а не сломанная оцифровка.
+      // сценарий — генерация без референса, а не сломанная оцифровка.
       referenceBase64 = null
     }
     if (referenceBase64 === null) {
@@ -427,11 +500,50 @@ export async function generateImage(
     }
   }
 
-  return requestBlob(GENERATE_PATH, {
+  const body = await requestJson<unknown>(GENERATE_PATH, {
     ...rest,
     timeoutMs: timeoutMs ?? GENERATE_TIMEOUT_MS,
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(headers ?? {}) },
     body: JSON.stringify(payload),
+  })
+  return readGenerationTask(body)
+}
+
+/**
+ * Опрашивает статус задачи. Короткий вызов каждые ~3 с, поэтому таймаут у него
+ * свой и небольшой: зависший опрос не должен держать экран статуса.
+ */
+export async function getGenerationStatus(
+  taskId: string,
+  options: TidyRequestOptions = {},
+): Promise<GenerationStatus> {
+  const body = await requestJson<unknown>(generationStatusPath(taskId), {
+    ...options,
+    timeoutMs: options.timeoutMs ?? GENERATION_STATUS_TIMEOUT_MS,
+    method: 'GET',
+  })
+  if (!isRecord(body) || typeof body.status !== 'string') {
+    throw new TidyApiError('invalid_response', 'Сервис вернул некорректный статус задачи')
+  }
+  return {
+    taskId: typeof body.taskId === 'string' ? body.taskId : taskId,
+    status: body.status,
+    costRub: typeof body.costRub === 'number' ? body.costRub : null,
+  }
+}
+
+/**
+ * Скачивает готовую картинку задачи — отдельным запросом от статуса
+ * (ADR-0006): файл не должен висеть в теле опроса.
+ */
+export async function downloadGeneration(
+  taskId: string,
+  options: TidyRequestOptions = {},
+): Promise<Blob> {
+  return await requestBlob(generationImagePath(taskId), {
+    ...options,
+    timeoutMs: options.timeoutMs ?? GENERATION_IMAGE_TIMEOUT_MS,
+    method: 'GET',
   })
 }

@@ -32,6 +32,10 @@ function setup(overrides: Partial<DigitizeQueueApi> = {}) {
     start: vi.fn(async () => undefined),
     resume: vi.fn(async () => undefined),
     stop: vi.fn(),
+    readyCount: 0,
+    grabbing: false,
+    grabMessage: null,
+    grab: vi.fn(async () => undefined),
     ...overrides,
   }
   mocked.mockReturnValue(api)
@@ -119,5 +123,29 @@ describe('Панель оцифровки (T12)', () => {
     setup({ progress: makeProgress({ статус: 'завершена', всего: 0 }) })
     render(<DigitizePanel />)
     expect(screen.getByText('Всё уже оцифровано')).toBeInTheDocument()
+  })
+
+  it('«Забрать готовое (N)» появляется при висящих задачах и зовёт grab', () => {
+    const api = setup({ readyCount: 3 })
+    render(<DigitizePanel />)
+
+    const button = screen.getByRole('button', { name: 'Забрать готовое (3)' })
+    fireEvent.click(button)
+    expect(api.grab).toHaveBeenCalledTimes(1)
+  })
+
+  it('пока забор идёт — кнопка занята, итог показывается строкой статуса', () => {
+    setup({ readyCount: 2, grabbing: true, grabMessage: 'Готовое: забрали 2' })
+    render(<DigitizePanel />)
+
+    const button = screen.getByRole('button', { name: 'Забираем готовое…' })
+    expect(button).toBeDisabled()
+    expect(screen.getByText('Готовое: забрали 2')).toBeInTheDocument()
+  })
+
+  it('без висящих задач кнопки забора нет', () => {
+    setup({ readyCount: 0 })
+    render(<DigitizePanel />)
+    expect(screen.queryByRole('button', { name: /Забрать готовое/ })).toBeNull()
   })
 })

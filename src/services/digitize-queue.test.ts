@@ -115,8 +115,8 @@ describe('Очередь оцифровки (T12)', () => {
     })
     expect(generate).toHaveBeenCalledTimes(20)
     expect(await countByRole('ai')).toBe(20)
-    // Оригиналы не тронуты — ни одна вещь не потеряла исходник.
-    expect(await countByRole('оригинал')).toBe(20)
+    // Сырьевые снимки удалены после успеха (ADR-0006 §4) — для вещей «фото».
+    expect(await countByRole('оригинал')).toBe(0)
 
     // Состояние очереди действительно персистится.
     const persisted = await loadQueue()

@@ -22,8 +22,17 @@
  * `src/ui/*` рисует его.
  */
 
-import { ОшибкаОцифровки, digitizeAuto, itemsNeedingDigitization, type DigitizeDeps, type ПлановаяВещь } from './digitize'
+import {
+  ОшибкаОцифровки,
+  digitizeAuto,
+  itemsNeedingDigitization,
+  saveGeneratedResult,
+  type DigitizeDeps,
+  type ПлановаяВещь,
+} from './digitize'
+import { ОшибкаГенерации, activeGenerationRun, grabGeneration } from './generation'
 import { TidyApiError } from './tidy-api'
+import { loadJobs, removeJob } from '../storage/jobs'
 import {
   QUEUE_ID,
   clearQueue,
@@ -63,6 +72,18 @@ export interface DigitizeQueueOptions extends DigitizeDeps {
   sleep?: (ms: number) => Promise<void>
 }
 
+/** Итог «Забрать готовое» по всем висящим задачам генерации. */
+export interface GrabSummary {
+  /** Сохранённые AI-версии. */
+  сохранено: number
+  /** Задачи, которые ещё работают (или чей прогон идёт прямо сейчас). */
+  ждут: number
+  /** Терминально неудачные: их перезапускают кнопкой в карточке вещи. */
+  неудачно: number
+  /** Сбой забора (сеть, хранилище), если он был. */
+  последняяОшибка?: string
+}
+
 interface QueueFailure {
   message: string
   /** `true` — повтор не поможет: нет токена, нет Оригинала, вещь удалена. */
@@ -83,6 +104,11 @@ function describeFailure(error: unknown): QueueFailure {
         error.code === 'not_configured' ||
         error.code === 'billing',
     }
+  }
+  if (error instanceof ОшибкаГенерации) {
+    // `timeout` — новый сеанс допроса той же задачи, `failed` — новая попытка
+    // (провайдер уже вернул деньги). Обе причины повторяемы.
+    return { message: error.message, fatal: false }
   }
   if (error instanceof ОшибкаОцифровки) {
     return {
@@ -286,6 +312,61 @@ export class DigitizeQueue {
     if (!this.#running) return
     this.#stopRequested = true
     this.#controller?.abort()
+  }
+
+  /**
+   * «Забрать готовое» (ADR-0006): обходит задачи генерации, пережившие
+   * закрытие вкладки, и сохраняет картинки, которые провайдер уже отдал.
+   * Ничего не запускается и не оплачивается — только забор уже готового.
+   * Подписчики `onDigitized` получают событие по каждой сохранённой вещи,
+   * чтобы сетка перечитала изображения.
+   */
+  async grabReady(): Promise<GrabSummary> {
+    const итог: GrabSummary = { сохранено: 0, ждут: 0, неудачно: 0 }
+
+    let jobs
+    try {
+      jobs = await loadJobs()
+    } catch (error) {
+      итог.последняяОшибка =
+        error instanceof Error ? error.message : 'Не удалось прочитать задачи генерации'
+      return итог
+    }
+
+    for (const job of jobs) {
+      if (job.taskId === undefined) continue
+      if (activeGenerationRun(job.idВещи) !== undefined) {
+        // Прогон той же вещи идёт прямо сейчас — он сам всё доведёт до конца.
+        итог.ждут += 1
+        continue
+      }
+      try {
+        const результат = await grabGeneration(job.idВещи, {
+          ...(this.#deps.signal === undefined ? {} : { signal: this.#deps.signal }),
+        })
+        if (результат.state === 'готово') {
+          await saveGeneratedResult(job.idВещи, результат.blob, { ...this.#deps, force: job.force })
+          итог.сохранено += 1
+          for (const listener of this.#digitizedListeners) listener(job.idВещи)
+        } else if (результат.state === 'ждёт') {
+          итог.ждут += 1
+        } else if (результат.state === 'не удалось') {
+          итог.неудачно += 1
+        }
+        // `нет` — задача уже разрешилась сама (например, в другом прогоне).
+      } catch (error) {
+        if (error instanceof ОшибкаОцифровки && error.code === 'not_found') {
+          // Вещь удалили — осиротевшая задача генерации не нужна.
+          await removeJob(job.idВещи).catch(() => undefined)
+          continue
+        }
+        // Моргнула сеть или упала IndexedDB: задача не потеряна, повтор кнопкой.
+        итог.ждут += 1
+        итог.последняяОшибка =
+          error instanceof Error ? error.message : 'Не удалось забрать готовое'
+      }
+    }
+    return итог
   }
 
   #emit(): void {

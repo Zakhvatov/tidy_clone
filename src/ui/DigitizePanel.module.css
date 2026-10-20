@@ -8,6 +8,10 @@
   background: var(--color-surface);
 }
 
+.grabRow {
+  display: flex;
+}
+
 .header {
   display: flex;
   flex-wrap: wrap;

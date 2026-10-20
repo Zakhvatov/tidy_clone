@@ -10,8 +10,7 @@ import {
 import {
   CLASSIFY_TIMEOUT_MS,
   DEFAULT_FRAME_SIZE,
-  GENERATE_POLL_INTERVAL_MS,
-  GENERATE_TIMEOUT_MS,
+  IMAGE_DOWNLOAD_TIMEOUT_MS,
   MAX_GENERATE_BODY_BYTES,
   MAX_GENERATE_INPUT_BYTES,
 } from "./config";
@@ -142,6 +141,11 @@ interface ProviderScript {
   download?: Response;
   /** Ответ POST /v1/files/ (загрузка i2i-референса). */
   upload?: Response;
+  /**
+   * Тело download, которое висит до таймаута. Тест правки ADR-0006: раньше
+   * чтение тела не было ограничено, и зависшее скачивание висело вечно.
+   */
+  hangingDownload?: boolean;
 }
 
 /**
@@ -150,7 +154,7 @@ interface ProviderScript {
  */
 function stubProvider(script: ProviderScript = {}) {
   const states = [...(script.states ?? [])];
-  const fetchMock = vi.fn(async (input: Request | string | URL, _init?: RequestInit) => {
+  const fetchMock = vi.fn(async (input: Request | string | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/files/")) {
       return script.upload ?? jsonResponse({ url: "https://files.iskragen.test/in-ref", id: "f-1" }, 201);
@@ -159,6 +163,7 @@ function stubProvider(script: ProviderScript = {}) {
       return script.create ?? jsonResponse({ id: "gen-1", status: "SUCCEEDED", costRub: 7 }, 202);
     }
     if (url.endsWith("/download?index=0")) {
+      if (script.hangingDownload === true) return hangingResponse(init?.signal ?? null);
       return script.download ?? imageResponse();
     }
     if (/\/generations\/[^/]+$/.test(url)) {
@@ -168,6 +173,31 @@ function stubProvider(script: ProviderScript = {}) {
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+/**
+ * Тело, которое не завершается само, но отменяется по `AbortSignal`, — так
+ * ведёт себя настоящий зависший провайдер под отменённым `fetch`. Нужен, чтобы
+ * проверить: чтение тела ограничено дедлайном, а не висит вечно.
+ */
+function hangingResponse(signal: AbortSignal | null): Response {
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      streamController = controller;
+      signal?.addEventListener("abort", () => {
+        try {
+          streamController?.error(new Error("aborted"));
+        } catch {
+          // поток уже закрыт — отменять больше нечего
+        }
+      });
+    },
+    pull() {
+      // Байты не отдаём никогда: тело висит до отмены сигналом.
+    },
+  });
+  return new Response(stream, { headers: { "content-type": "image/png" } });
 }
 
 /** Окружение с полным успешным прогоном провайдера (POST → SUCCEEDED → download). */
@@ -381,8 +411,9 @@ describe("клиентский токен", () => {
       post("/generate", { prompt: "hoodie" }),
       iskraSuccessEnv(),
     );
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toMatch(/^image\//);
+    expect(response.status).toBe(202);
+    expect(response.headers.get("content-type")).toMatch(/application\/json/);
+    expect(await response.json()).toMatchObject({ taskId: "gen-1" });
   });
 });
 
@@ -400,7 +431,7 @@ describe("ограничение тела на потоке", () => {
     expect(new TextEncoder().encode(body).length).toBe(LIMIT);
     const request = new Request(`${BASE}/generate`, { method: "POST", headers: authHeaders(undefined), body });
     const response = await handleRequest(request, iskraSuccessEnv());
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
   });
 
   it("Content-Length больше лимита → 413 без чтения тела", async () => {
@@ -432,7 +463,7 @@ describe("ограничение тела на потоке", () => {
     const body = new TextEncoder().encode(generateBody(LIMIT));
     const { request } = streamRequest("/generate", [body.subarray(0, 8000), body.subarray(8000)]);
     const response = await handleRequest(request, iskraSuccessEnv());
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
   });
 });
 
@@ -446,6 +477,12 @@ describe("методы и маршруты", () => {
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("POST");
     expect((await errorBody(response)).code).toBe("method_not_allowed");
+  });
+
+  it("POST /generate/gen-1 → 405 и Allow: GET", async () => {
+    const response = await handleRequest(post("/generate/gen-1", {}), iskraEnv());
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET");
   });
 
   it("POST /health → 405 и Allow: GET", async () => {
@@ -487,7 +524,7 @@ describe("POST /generate: валидация", () => {
       post("/generate", { prompt: "x".repeat(800) }),
       iskraSuccessEnv(),
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
   });
 
   it("нечисловой width → 400, а не 500", async () => {
@@ -528,7 +565,7 @@ describe("POST /generate: валидация", () => {
       post("/generate", { prompt: "hoodie", imageBase64: "AAAA", mimeType: "image/jpeg" }),
       iskraEnv(),
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
   });
 });
 
@@ -554,7 +591,7 @@ describe("ограничение частоты", () => {
       post("/generate", { prompt: "hoodie" }),
       iskraEnv({ GENERATE_RATE_LIMITER: limiter }),
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     expect(limiter.limit).toHaveBeenCalledTimes(1);
     const key = (limiter.limit.mock.calls[0]![0] as { key: string }).key;
     expect(key).toMatch(/^[0-9a-f]{64}$/);
@@ -597,13 +634,25 @@ describe("ограничение частоты", () => {
       post("/generate", { prompt: "hoodie" }),
       iskraEnv({ GENERATE_RATE_LIMITER: limiter }),
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
   });
 
   it("без binding лимитера запрос проходит (локальный запуск)", async () => {
     stubProvider();
     const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
+  });
+
+  it("статус генерации использует свой лимитер (60/мин)", async () => {
+    stubProvider();
+    const limiter = { limit: vi.fn(async () => ({ success: false })) };
+    const response = await handleRequest(
+      get("/generate/gen-1", ORIGIN, CLIENT_TOKEN),
+      iskraEnv({ GENERATION_STATUS_RATE_LIMITER: limiter }),
+    );
+    expect(response.status).toBe(429);
+    expect((await errorBody(response)).code).toBe("rate_limited");
+    expect(limiter.limit).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -611,43 +660,36 @@ describe("ограничение частоты", () => {
 // POST /generate — модель
 // ---------------------------------------------------------------------------
 
-describe("POST /generate: провайдер", () => {
-  it("ставит задачу, опрашивает статус и отдаёт байты с CORS", async () => {
-    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0x00, 0x10]);
+describe("POST /generate: асинхронный запуск (ADR-0006)", () => {
+  it("ставит задачу и отвечает 202 с taskId, картинку не ждёт", async () => {
     const fetchMock = stubProvider({
-      create: jsonResponse({ id: "gen-42", status: "PENDING", costRub: 7 }, 202),
-      states: [
-        jsonResponse({ id: "gen-42", status: "PROCESSING" }),
-        jsonResponse({ id: "gen-42", status: "SUCCEEDED", costRub: 7 }),
-      ],
-      download: imageResponse(bytes, "image/jpeg"),
+      create: jsonResponse({ id: "gen-42", status: "PENDING", costRub: 5 }, 202),
     });
 
-    vi.useFakeTimers();
-    let response: Response;
-    try {
-      const pending = handleRequest(
-        post("/generate", { prompt: "hoodie", width: DEFAULT_FRAME_SIZE, height: DEFAULT_FRAME_SIZE }, ORIGIN),
-        iskraEnv(),
-      );
-      await vi.advanceTimersByTimeAsync(GENERATE_POLL_INTERVAL_MS * 2);
-      response = await pending;
-    } finally {
-      vi.useRealTimers();
-    }
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", width: DEFAULT_FRAME_SIZE, height: DEFAULT_FRAME_SIZE }, ORIGIN),
+      iskraEnv(),
+    );
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      taskId: "gen-42",
+      status: "PENDING",
+      costRub: 5,
+      model: "gpt-image-2-text-to-image",
+    });
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("access-control-allow-origin")).toBe(ORIGIN);
-    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+    expect(response.headers.get("x-tidy-model")).toBe("gpt-image-2-text-to-image");
+    expect(response.headers.get("x-tidy-cost-rub")).toBe("5");
 
-    // create + два опроса + download
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    // только create: воркер не опрашивает статус и не качает файл сам
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const [createUrl, createInit] = fetchMock.mock.calls[0]!;
     expect(String(createUrl)).toBe("https://api.iskragen.ru/v1/generations");
     const headers = (createInit?.headers ?? {}) as Record<string, string>;
     expect(headers.authorization).toBe(`Bearer ${ISKRA_KEY}`);
+    expect(headers["Idempotency-Key"]).toBeUndefined();
     const sent = JSON.parse(String(createInit?.body)) as Record<string, unknown>;
     expect(sent).toEqual({
       modelSlug: "gpt-image-2-text-to-image",
@@ -658,21 +700,40 @@ describe("POST /generate: провайдер", () => {
     expect(sent).not.toHaveProperty("height");
   });
 
-  it("скачивает результат через /download с авторизацией", async () => {
+  it("пробрасывает Idempotency-Key провайдеру", async () => {
     const fetchMock = stubProvider();
-    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
-    expect(response.status).toBe(200);
-
-    const [url, init] = fetchMock.mock.calls[1]!;
-    expect(String(url)).toBe("https://api.iskragen.ru/v1/generations/gen-1/download?index=0");
-    expect((init?.headers as Record<string, string>).authorization).toBe(`Bearer ${ISKRA_KEY}`);
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", idempotencyKey: "item-1:nano-banana-2-1" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(202);
+    const headers = (fetchMock.mock.calls[0]?.[1]?.headers ?? {}) as Record<string, string>;
+    expect(headers["Idempotency-Key"]).toBe("item-1:nano-banana-2-1");
   });
 
-  it("успешная задача сразу (без polling) не ждёт", async () => {
-    stubProvider();
-    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("image/png");
+  it("недопустимый idempotencyKey → 400 до обращения к провайдеру", async () => {
+    for (const bad of ["x".repeat(65), "с пробелом", "ключ/с-разделителем"]) {
+      const fetchMock = stubProvider();
+      const response = await handleRequest(
+        post("/generate", { prompt: "hoodie", idempotencyKey: bad }),
+        iskraEnv(),
+      );
+      expect(response.status).toBe(400);
+      expect((await errorBody(response)).code).toBe("invalid_input");
+      expect(fetchMock).not.toHaveBeenCalled();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("пустой idempotencyKey не уходит провайдеру", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", idempotencyKey: "   " }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(202);
+    const headers = (fetchMock.mock.calls[0]?.[1]?.headers ?? {}) as Record<string, string>;
+    expect(headers["Idempotency-Key"]).toBeUndefined();
   });
 
   it("без ключа → 503 not_configured", async () => {
@@ -733,52 +794,212 @@ describe("POST /generate: провайдер", () => {
     expect(response.status).toBe(502);
     expect((await errorBody(response)).code).toBe("model_error");
   });
+});
 
-  it("FAILED задачи → 502 model_error", async () => {
+// ---------------------------------------------------------------------------
+// GET /generate/{taskId} — статус
+// ---------------------------------------------------------------------------
+
+describe("GET /generate/{taskId}: статус", () => {
+  it("возвращает статус и стоимость с CORS", async () => {
+    const fetchMock = stubProvider({
+      states: [jsonResponse({ id: "gen-42", status: "SUCCEEDED", costRub: 5 })],
+    });
+    const response = await handleRequest(get("/generate/gen-42", ORIGIN, CLIENT_TOKEN), iskraEnv());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ taskId: "gen-42", status: "SUCCEEDED", costRub: 5 });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-tidy-cost-rub")).toBe("5");
+    expect(response.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://api.iskragen.ru/v1/generations/gen-42",
+    );
+    expect((fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>).authorization).toBe(
+      `Bearer ${ISKRA_KEY}`,
+    );
+  });
+
+  it("задача ещё идёт → статус провайдера как есть", async () => {
+    stubProvider({ states: [jsonResponse({ id: "gen-1", status: "PROCESSING" })] });
+    const response = await handleRequest(get("/generate/gen-1", ORIGIN, CLIENT_TOKEN), iskraEnv());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "PROCESSING" });
+  });
+
+  it("FAILED — не ошибка транспорта: статус отдаётся клиенту", async () => {
     stubProvider({
-      create: jsonResponse({ id: "gen-1", status: "PENDING" }, 202),
       states: [jsonResponse({ id: "gen-1", status: "FAILED", errorCode: "PROVIDER_ERROR" })],
     });
-    vi.useFakeTimers();
-    try {
-      const pending = handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
-      await vi.advanceTimersByTimeAsync(GENERATE_POLL_INTERVAL_MS);
-      const response = await pending;
-      expect(response.status).toBe(502);
-      expect((await errorBody(response)).code).toBe("model_error");
-    } finally {
-      vi.useRealTimers();
-    }
+    const response = await handleRequest(get("/generate/gen-1", ORIGIN, CLIENT_TOKEN), iskraEnv());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "FAILED" });
+  });
+
+  it("задача не найдена у провайдера → 404 not_found", async () => {
+    stubProvider({ states: [jsonResponse({ error: { code: "NOT_FOUND" } }, 404)] });
+    const response = await handleRequest(get("/generate/gen-1", ORIGIN, CLIENT_TOKEN), iskraEnv());
+    expect(response.status).toBe(404);
+    expect((await errorBody(response)).code).toBe("not_found");
+  });
+
+  it("5xx провайдера → 502 model_error", async () => {
+    stubProvider({ states: [jsonResponse({ error: { code: "API_ERROR" } }, 500)] });
+    const response = await handleRequest(get("/generate/gen-1", ORIGIN, CLIENT_TOKEN), iskraEnv());
+    expect(response.status).toBe(502);
+    expect((await errorBody(response)).code).toBe("model_error");
+  });
+
+  it("без ключа ISKRAGEN_API_KEY → 503 not_configured", async () => {
+    const response = await handleRequest(get("/generate/gen-1", ORIGIN, CLIENT_TOKEN), makeEnv());
+    expect(response.status).toBe(503);
+    expect((await errorBody(response)).code).toBe("not_configured");
+  });
+
+  it("без клиентского токена → 401", async () => {
+    const response = await handleRequest(get("/generate/gen-1", ORIGIN), iskraEnv());
+    expect(response.status).toBe(401);
+    expect((await errorBody(response)).code).toBe("unauthorized");
+  });
+
+  it("недопустимый taskId → 400 без обращения к провайдеру", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(
+      get("/generate/bad id!", ORIGIN, CLIENT_TOKEN),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(400);
+    expect((await errorBody(response)).code).toBe("invalid_input");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /generate/{taskId}/image — скачивание результата
+// ---------------------------------------------------------------------------
+
+describe("GET /generate/{taskId}/image", () => {
+  const BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0x00, 0x10]);
+
+  function succeededStatus(): Response {
+    return jsonResponse({ id: "gen-42", status: "SUCCEEDED", costRub: 5 });
+  }
+
+  it("скачивает файл отдельным запросом после статуса", async () => {
+    const fetchMock = stubProvider({
+      states: [succeededStatus()],
+      download: imageResponse(BYTES, "image/jpeg"),
+    });
+    const response = await handleRequest(
+      get("/generate/gen-42/image", ORIGIN, CLIENT_TOKEN),
+      iskraEnv(),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-tidy-cost-rub")).toBe("5");
+    expect(response.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(BYTES);
+
+    // первый запрос — статус, второй — скачивание
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://api.iskragen.ru/v1/generations/gen-42",
+    );
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      "https://api.iskragen.ru/v1/generations/gen-42/download?index=0",
+    );
+    expect((fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>).authorization).toBe(
+      `Bearer ${ISKRA_KEY}`,
+    );
+  });
+
+  it("задача ещё идёт → 409 not_ready", async () => {
+    stubProvider({ states: [jsonResponse({ id: "gen-42", status: "PROCESSING" })] });
+    const response = await handleRequest(
+      get("/generate/gen-42/image", ORIGIN, CLIENT_TOKEN),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(409);
+    expect((await errorBody(response)).code).toBe("not_ready");
+  });
+
+  it("задача провалилась → 409 not_ready с пояснением", async () => {
+    stubProvider({
+      states: [jsonResponse({ id: "gen-42", status: "FAILED", errorCode: "PROVIDER_ERROR" })],
+    });
+    const response = await handleRequest(
+      get("/generate/gen-42/image", ORIGIN, CLIENT_TOKEN),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(409);
+    const body = await errorBody(response);
+    expect(body.code).toBe("not_ready");
+    expect(body.message).toContain("не удалась");
+  });
+
+  it("задача не найдена → 404 not_found", async () => {
+    stubProvider({ states: [jsonResponse({ error: { code: "NOT_FOUND" } }, 404)] });
+    const response = await handleRequest(
+      get("/generate/gen-42/image", ORIGIN, CLIENT_TOKEN),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(404);
+    expect((await errorBody(response)).code).toBe("not_found");
   });
 
   it("не-картинка вместо файла → 502", async () => {
-    stubProvider({ download: new Response("not an image", { headers: { "content-type": "text/plain" } }) });
-    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    stubProvider({
+      states: [succeededStatus()],
+      download: new Response("not an image", { headers: { "content-type": "text/plain" } }),
+    });
+    const response = await handleRequest(
+      get("/generate/gen-42/image", ORIGIN, CLIENT_TOKEN),
+      iskraEnv(),
+    );
     expect(response.status).toBe(502);
     expect((await errorBody(response)).code).toBe("model_error");
   });
 
   it("пустой файл → 502", async () => {
-    stubProvider({ download: imageResponse(new Uint8Array(0), "image/png") });
-    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    stubProvider({
+      states: [succeededStatus()],
+      download: imageResponse(new Uint8Array(0), "image/png"),
+    });
+    const response = await handleRequest(
+      get("/generate/gen-42/image", ORIGIN, CLIENT_TOKEN),
+      iskraEnv(),
+    );
     expect(response.status).toBe(502);
   });
 
-  it("задача не завершилась за отведённое время → 504 model_timeout", async () => {
-    stubProvider({
-      create: jsonResponse({ id: "gen-1", status: "PENDING" }, 202),
-      states: [],
-    });
+  it("зависшее чтение тела обрывается по таймауту → 504, а не висит вечно", async () => {
+    stubProvider({ states: [succeededStatus()], hangingDownload: true });
     vi.useFakeTimers();
     try {
-      const pending = handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
-      await vi.advanceTimersByTimeAsync(GENERATE_TIMEOUT_MS + GENERATE_POLL_INTERVAL_MS);
+      const pending = handleRequest(
+        get("/generate/gen-42/image", ORIGIN, CLIENT_TOKEN),
+        iskraEnv(),
+      );
+      await vi.advanceTimersByTimeAsync(IMAGE_DOWNLOAD_TIMEOUT_MS + 100);
       const response = await pending;
       expect(response.status).toBe(504);
       expect((await errorBody(response)).code).toBe("model_timeout");
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("лимит скачивания: отказ своего лимитера → 429", async () => {
+    stubProvider();
+    const limiter = { limit: vi.fn(async () => ({ success: false })) };
+    const response = await handleRequest(
+      get("/generate/gen-42/image", ORIGIN, CLIENT_TOKEN),
+      iskraEnv({ GENERATION_IMAGE_RATE_LIMITER: limiter }),
+    );
+    expect(response.status).toBe(429);
+    expect((await errorBody(response)).code).toBe("rate_limited");
+    expect(limiter.limit).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -800,7 +1021,7 @@ describe("POST /generate: выбор модели", () => {
       }),
       iskraEnv(),
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     expect(sentBody(fetchMock)).toEqual({
       modelSlug: "grok-imagine-image-2-0-text-to-image",
       prompt: "hoodie",
@@ -816,7 +1037,7 @@ describe("POST /generate: выбор модели", () => {
       post("/generate", { prompt: "hoodie", model: "qwen3-text-to-image" }),
       iskraEnv(),
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     expect(sentBody(fetchMock)).toMatchObject({
       modelSlug: "qwen3-text-to-image",
       params: { image_size: "1:1", resolution: "1K" },
@@ -845,7 +1066,7 @@ describe("POST /generate: выбор модели", () => {
   it("без model работает модель из конфигурации", async () => {
     const fetchMock = stubProvider();
     const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     expect(sentBody(fetchMock)).toMatchObject({ modelSlug: "gpt-image-2-text-to-image" });
   });
 });
@@ -867,7 +1088,7 @@ describe("POST /generate: входное изображение", () => {
       post("/generate", { prompt: "hoodie", imageBase64: "AAAA", mimeType: "image/jpeg" }),
       iskraEnv(),
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
 
     const [uploadUrl, uploadInit] = fetchMock.mock.calls[0]!;
     expect(String(uploadUrl)).toBe("https://api.iskragen.ru/v1/files/");
@@ -902,7 +1123,7 @@ describe("POST /generate: входное изображение", () => {
       }),
       iskraEnv(),
     );
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     const create = fetchMock.mock.calls[1]!;
     expect(String(create[0])).toBe("https://api.iskragen.ru/v1/generations");
     expect(JSON.parse(String(create[1]?.body))).toMatchObject({

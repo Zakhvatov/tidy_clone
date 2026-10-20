@@ -18,7 +18,7 @@ function статусТекст(статус: string): string {
 }
 
 /**
- * Панель массовой оцифровки на экране гардероба (T12).
+ * Панель массовой оцифровки на экране гардероба (T12 + ADR-0006).
  *
  * Кнопка запускает «Оцифровать всё, где нет пакшота»: вещи без выреза и без
  * AI-версии. Пока очередь идёт — прогресс (обработано/всего, успехи, ошибки,
@@ -26,11 +26,16 @@ function статусТекст(статус: string): string {
  * панель предлагает «Продолжить оцифровку» — сама очередь не запускается:
  * генерация без нажатия запрещена.
  *
+ * Если висят задачи генерации, пережившие закрытие вкладки, поверх появляется
+ * «Забрать готовое (N)» — разовый забор уже сгенерированных картинок без
+ * новых оплат.
+ *
  * Компонент самодостаточен: он один знает про очередь, поэтому врезка в
  * `WardrobeScreen` — одна строка.
  */
 export function DigitizePanel() {
-  const { progress, busy, resumable, startError, start, resume, stop } = useDigitizeQueue()
+  const { progress, busy, resumable, startError, start, resume, stop, readyCount, grabbing, grabMessage, grab } =
+    useDigitizeQueue()
   const online = useOnline()
 
   const всего = progress.всего
@@ -41,6 +46,18 @@ export function DigitizePanel() {
   return (
     <section className={styles.panel}>
       {!online && <OfflineNotice />}
+      {!busy && readyCount > 0 && (
+        <div className={styles.grabRow}>
+          <button className={styles.primary} type="button" disabled={grabbing} onClick={() => void grab()}>
+            {grabbing ? 'Забираем готовое…' : `Забрать готовое (${readyCount})`}
+          </button>
+        </div>
+      )}
+      {grabMessage !== null && (
+        <p className={styles.line} role="status" aria-live="polite">
+          {grabMessage}
+        </p>
+      )}
       <div className={styles.header}>
         <h2 className={styles.title}>{статусТекст(progress.статус)}</h2>
         {busy ? (
