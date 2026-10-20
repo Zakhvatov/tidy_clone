@@ -10,11 +10,8 @@ import * as images from '../storage/images'
 import * as items from '../storage/items'
 import { loadJob } from '../storage/jobs'
 import {
-  digitizeAuto,
   digitizeItem,
-  digitizeMissing,
   digitizePackshot,
-  itemsNeedingDigitization,
   type DigitizeDeps,
 } from './digitize'
 
@@ -55,9 +52,6 @@ function makeImage(
     датаСоздания,
   }
 }
-
-const PACKSHOT = { isPackshot: true, whiteness: 0.9, uniformity: 0.9, reason: 'пакшот' }
-const MODEL = { isPackshot: false, whiteness: 0, uniformity: 0.2, reason: 'модель' }
 
 function baseDeps(): DigitizeDeps {
   return {
@@ -126,28 +120,6 @@ describe('Оцифровка (T10)', () => {
     expect(buildGenerationPrompt(makeItem({ подкатегория: '', категория: 'Разное' }))).toContain(
       'clothing item',
     )
-  })
-
-  it('пакшот оцифровывается вырезом, генерация не вызывается', async () => {
-    await items.create(makeItem({ id: 'вещь-1' }))
-    await images.addOriginal(makeImage('ор-1', 'вещь-1', 'оригинал', 'pack'))
-
-    const generate = vi.fn(async () => new Blob(['ai'], { type: 'image/jpeg' }))
-    const cutout = vi.fn(async () => cutoutResult('вырез-байты'))
-    const analyze = vi.fn(async () => PACKSHOT)
-
-    const outcome = await digitizeAuto('вещь-1', {
-      ...baseDeps(),
-      generate,
-      cutout,
-      analyze,
-      id: () => 'вырез-1',
-    })
-
-    expect(outcome).toMatchObject({ way: 'вырез', status: 'создано' })
-    expect(generate).not.toHaveBeenCalled()
-    expect(cutout).toHaveBeenCalledTimes(1)
-    expect((await images.get('вырез-1'))?.роль).toBe('вырез')
   })
 
   it('digitizePackshot вырезает без генерации, digitizeItem — генерирует', async () => {
@@ -226,72 +198,6 @@ describe('Оцифровка (T10)', () => {
     expect(outcome).toMatchObject({ way: 'ai', status: 'создано' })
     expect(generate).toHaveBeenCalledTimes(1)
     expect(await images.get('ai-1')).toBeDefined()
-  })
-
-  it('массовая оцифровка пропускает уже оцифрованное, даже если force лежит в deps', async () => {
-    await items.create(makeItem({ id: 'с-ai' }))
-    await images.addOriginal(makeImage('ор-1', 'с-ai', 'оригинал', 'x'))
-    await images.addAiVersion(makeImage('ai-гот', 'с-ai', 'ai', 'x'))
-
-    const generate = vi.fn(async () => new Blob(['ai'], { type: 'image/jpeg' }))
-    const результаты = await digitizeMissing({
-      ...baseDeps(),
-      generate,
-      analyze: async () => MODEL,
-      cutout: async () => cutoutResult('cut'),
-      force: true,
-    })
-
-    expect(результаты).toEqual([])
-    expect(generate).not.toHaveBeenCalled()
-    expect((await images.listByItem('с-ai')).filter((i) => i.роль === 'ai')).toHaveLength(1)
-  })
-
-  it('digitizeMissing: пакшот → вырез, модельное → AI, вещь с вырезом не трогается', async () => {
-    await items.create(makeItem({ id: 'пакшот' }))
-    await items.create(makeItem({ id: 'модель' }))
-    await items.create(makeItem({ id: 'уже-вырез' }))
-    await images.addOriginal(makeImage('ор-п', 'пакшот', 'оригинал', 'pack'))
-    await images.addOriginal(makeImage('ор-м', 'модель', 'оригинал', 'model'))
-    await images.addOriginal(makeImage('ор-в', 'уже-вырез', 'оригинал', 'pack'))
-    await images.addCutout(makeImage('вырез-готов', 'уже-вырез', 'вырез', 'cut'))
-
-    const generate = vi.fn(async () => new Blob(['ai'], { type: 'image/jpeg' }))
-    const cutout = vi.fn(async () => cutoutResult('cut'))
-    const analyze = async (_blob: Blob, вещь: Вещь) => (вещь.id === 'пакшот' ? PACKSHOT : MODEL)
-
-    let nextId = 0
-    const результаты = await digitizeMissing({
-      ...baseDeps(),
-      generate,
-      cutout,
-      analyze,
-      id: () => `new-${++nextId}`,
-    })
-
-    expect(результаты.map((r) => r.itemId).sort()).toEqual(['модель', 'пакшот'])
-    expect(результаты.every((r) => r.error === undefined)).toBe(true)
-    expect(generate).toHaveBeenCalledTimes(1)
-    expect(cutout).toHaveBeenCalledTimes(1)
-
-    const пакшот = await images.listByItem('пакшот')
-    expect(пакшот.map((i) => i.роль)).toContain('вырез')
-    const модель = await images.listByItem('модель')
-    expect(модель.map((i) => i.роль)).toContain('ai')
-    // Вещь с готовым вырезом в план не попала и второго изображения не получила.
-    expect(await images.listByItem('уже-вырез')).toHaveLength(2)
-  })
-
-  it('itemsNeedingDigitization возвращает только вещи без выреза и без AI', async () => {
-    await items.create(makeItem({ id: 'нужна' }))
-    await items.create(makeItem({ id: 'с-ai' }))
-    await items.create(makeItem({ id: 'с-вырезом' }))
-    await images.addOriginal(makeImage('ор-1', 'нужна', 'оригинал', 'x'))
-    await images.addAiVersion(makeImage('ai-1', 'с-ai', 'ai', 'x'))
-    await images.addCutout(makeImage('в-1', 'с-вырезом', 'вырез', 'x'))
-
-    const план = await itemsNeedingDigitization()
-    expect(план.map((p) => p.id)).toEqual(['нужна'])
   })
 
   it('вещь без Оригинала даёт понятную ошибку, а не тихий сбой', async () => {

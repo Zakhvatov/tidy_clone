@@ -19,12 +19,7 @@ import { AppRoutes } from '../app/App'
 import { FALLBACK_SUB, FALLBACK_TOP, subcategoriesOf, TAXONOMY, topCategories } from '../domain/taxonomy'
 import type { ImageRole, Изображение, Образ, Season, Вещь } from '../domain/types'
 import { isDictionaryConsistent, knownPairs, mapWbCategory } from '../domain/wb-taxonomy'
-import {
-  digitizeItem,
-  digitizePackshot,
-  itemsNeedingDigitization,
-} from '../services/digitize'
-import { DigitizeQueue } from '../services/digitize-queue'
+import { digitizeItem, digitizePackshot } from '../services/digitize'
 import {
   MAX_ORIGINAL_BYTES,
   createDraftFromLink,
@@ -41,7 +36,6 @@ import { ОшибкаВещьВОбразе, ОшибкаОригиналНеи�
 import * as images from '../storage/images'
 import * as items from '../storage/items'
 import * as outfits from '../storage/outfits'
-import { loadQueue, saveQueue, type СостояниеОчереди } from '../storage/queue'
 
 // ---------------------------------------------------------------------------
 // Фикстуры и моки (полностью свои)
@@ -201,7 +195,7 @@ function frame(
 // Сквозной путь
 // ---------------------------------------------------------------------------
 
-describe('НЕЗАВИСИМО: сквозной путь ссылка/фото → вырез → очередь → образ → перезапуск', () => {
+describe('НЕЗАВИСИМО: сквозной путь ссылка/фото → вырез → AI-версия → образ → перезапуск', () => {
   beforeEach(async () => {
     await closeDb()
     await deleteDB(DB_NAME)
@@ -292,23 +286,21 @@ describe('НЕЗАВИСИМО: сквозной путь ссылка/фото 
     )
     const все = [A, B, C, D, E]
 
-    // 5. Очередь оцифровки (мок воркера). A уже с вырезом — в план не войдёт.
+    // 5. AI-версии для B–E — явными действиями, как кнопка «Сделать AI-версию».
+    // A уже с вырезом: её не трогаем.
     const снимкиДо = new Map<string, Изображение | undefined>()
     for (const { вещь, оригинал } of все) снимкиДо.set(вещь.id, await images.get(оригинал.id))
 
     const generate = vi.fn(okGenerate)
-    const очередь = new DigitizeQueue({
-      generate,
-      analyze: async () => MODEL,
-      measure,
-      now: () => iso(200),
-      id: uniqueAiIds(),
-      sleep: async () => {},
-    })
-    await очередь.start()
-
-    // Прогресс очереди: 4 вещи (A исключён по вырезу).
-    expect(очередь.progress).toMatchObject({ всего: 4, успехов: 4, ошибок: 0, осталось: 0 })
+    const nextId = uniqueAiIds()
+    for (const { вещь } of [B, C, D, E]) {
+      await digitizeItem(вещь.id, {
+        generate,
+        measure,
+        now: () => iso(200),
+        id: nextId,
+      })
+    }
     expect(generate).toHaveBeenCalledTimes(4)
 
     // A — из ссылки: Оригинал хранится (ADR-0006 §4 касается только «фото»).
@@ -474,97 +466,6 @@ describe('НЕЗАВИСИМО: негативные кейсы', () => {
     }
   })
 
-  it('очередь: 429/502 ретраятся до 3 попыток и не роняют следующие вещи', async () => {
-    await seedItem('фейл', 'Фейл')
-    await seedItem('ок', 'Ок')
-    const generate = vi.fn(async (вещь: Вещь) => {
-      if (вещь.id === 'фейл') throw new TidyApiError('rate_limited', '429', { status: 429 })
-      return new Blob(['ai'], { type: 'image/jpeg' })
-    })
-    const очередь = new DigitizeQueue({
-      generate,
-      analyze: async () => MODEL,
-      measure,
-      id: uniqueAiIds(),
-      sleep: async () => {},
-      maxAttempts: 3,
-    })
-    await очередь.start()
-
-    const состояние = await loadQueue()
-    const фейл = состояние?.задачи.find((t) => t.idВещи === 'фейл')
-    const ок = состояние?.задачи.find((t) => t.idВещи === 'ок')
-    expect(фейл?.статус).toBe('не удалось')
-    expect(фейл?.попытки).toBe(3)
-    expect(ок?.статус).toBe('готово')
-    expect(generate).toHaveBeenCalledTimes(4)
-    expect((await images.listByItem('фейл')).filter((i) => i.роль === 'ai')).toHaveLength(0)
-    expect((await images.listByItem('ок')).filter((i) => i.роль === 'ai')).toHaveLength(1)
-    expect(очередь.progress).toMatchObject({ всего: 2, успехов: 1, ошибок: 1 })
-  })
-
-  it('очередь: 401 останавливает её, вещь остаётся в «ожидает» и не помечается провалом', async () => {
-    await seedItem('a')
-    await seedItem('b')
-    const generate = vi.fn(async () => {
-      throw new TidyApiError('unauthorized', '401', { status: 401 })
-    })
-    const очередь = new DigitizeQueue({
-      generate,
-      analyze: async () => MODEL,
-      measure,
-      sleep: async () => {},
-      maxAttempts: 3,
-    })
-    await очередь.start()
-
-    const состояние = await loadQueue()
-    expect(состояние?.статус).toBe('остановлена')
-    expect(состояние?.задачи.every((t) => t.статус === 'ожидает')).toBe(true)
-    expect(очередь.progress.осталось).toBe(2)
-    expect(generate).toHaveBeenCalledTimes(1)
-  })
-
-  it('очередь, прерванная на середине: refresh нормализует, resume доводит до конца', async () => {
-    await seedItem('i1', 'Первая')
-    await seedItem('i2', 'Вторая')
-    await seedItem('i3', 'Третья')
-
-    const прерванная: СостояниеОчереди = {
-      id: 'active',
-      статус: 'выполняется',
-      текущая: 'i2',
-      датаНачала: iso(),
-      датаОбновления: iso(),
-      задачи: [
-        { id: 'i1', idВещи: 'i1', название: 'Первая', способ: 'ai', статус: 'готово', попытки: 1, датаСоздания: iso(), датаОбновления: iso() },
-        { id: 'i2', idВещи: 'i2', название: 'Вторая', способ: null, статус: 'в работе', попытки: 1, датаСоздания: iso(), датаОбновления: iso() },
-        { id: 'i3', idВещи: 'i3', название: 'Третья', способ: null, статус: 'ожидает', попытки: 0, датаСоздания: iso(), датаОбновления: iso() },
-      ],
-    }
-    await saveQueue(прерванная)
-    await closeDb()
-
-    const generate = vi.fn(okGenerate)
-    const очередь = new DigitizeQueue({
-      generate,
-      analyze: async () => MODEL,
-      measure,
-      id: uniqueAiIds(),
-      sleep: async () => {},
-    })
-
-    await очередь.refresh()
-    expect(очередь.progress).toMatchObject({ статус: 'остановлена', успехов: 1, осталось: 2 })
-
-    await очередь.resume()
-    const состояние = await loadQueue()
-    expect(состояние?.статус).toBe('завершена')
-    expect(состояние?.задачи.every((t) => t.статус === 'готово')).toBe(true)
-    // i1 уже был готов — повторно не оцифровывался.
-    expect(generate).toHaveBeenCalledTimes(2)
-  })
-
   it('вещь из образа удалить нельзя — понятная ошибка, вещь на месте', async () => {
     await seedItem('в-образе')
     await outfits.create(makeOutfit('образ-1', 'зима', ['в-образе']))
@@ -605,10 +506,9 @@ describe('НЕЗАВИСИМО: негативные кейсы', () => {
     // А несуществующий товар (404 на всех лоадерах) — по-прежнему not_found: см. тест выше.
   })
 
-  it('пустой гардероб: чтение, секции и план оцифровки пусты', async () => {
+  it('пустой гардероб: чтение и секции пусты', async () => {
     expect(await loadWardrobe()).toEqual([])
     expect(groupByTopCategory([])).toEqual([])
-    expect(await itemsNeedingDigitization()).toEqual([])
   })
 })
 
@@ -698,17 +598,19 @@ describe('НЕЗАВИСИМО: проверка evidence-заявлений', (
     }
   })
 
-  it('миграция v1→v2 на реальном upgrade() сохраняет вещи, изображения и образы', async () => {
+  it('миграция с версии 1 сохраняет вещи, изображения и образы; стор queue убран (D16)', async () => {
     const db1 = await openDB<WardrobeDB>(DB_NAME, 1, { upgrade })
     await db1.add('items', makeItem({ id: 'v1', название: 'До миграции' }))
     await db1.add('images', makeImage('v1-orig', 'v1', 'оригинал', 'orig'))
     await db1.add('outfits', makeOutfit('v1-образ', 'зима', ['v1']))
-    expect(db1.objectStoreNames.contains('queue')).toBe(false)
+    expect((db1.objectStoreNames as unknown as DOMStringList).contains('queue')).toBe(false)
     db1.close()
 
     const db2 = await getDb()
     expect(db2.version).toBe(DB_VERSION)
-    expect(db2.objectStoreNames.contains('queue')).toBe(true)
+    // Очередь создавалась в v2 и удалена в v4; задачи генерации остаются.
+    expect((db2.objectStoreNames as unknown as DOMStringList).contains('queue')).toBe(false)
+    expect((db2.objectStoreNames as unknown as DOMStringList).contains('jobs')).toBe(true)
     expect((await db2.get('items', 'v1'))?.название).toBe('До миграции')
     expect(await db2.get('images', 'v1-orig')).toBeDefined()
     expect((await db2.get('outfits', 'v1-образ'))?.элементы).toHaveLength(1)
@@ -899,42 +801,18 @@ describe('НЕЗАВИСИМО: производительность', () => {
     const t1 = performance.now()
     const секции = groupByTopCategory(записи)
     const t2 = performance.now()
-    const план = await itemsNeedingDigitization()
-    const t3 = performance.now()
 
     const чтениеМс = t1 - t0
     const группировкаМс = t2 - t1
-    const планМс = t3 - t2
     console.log(
-      `[independent perf] loadWardrobe: ${чтениеМс.toFixed(2)} мс, группировка: ${группировкаМс.toFixed(2)} мс, план: ${планМс.toFixed(2)} мс`,
+      `[independent perf] loadWardrobe: ${чтениеМс.toFixed(2)} мс, группировка: ${группировкаМс.toFixed(2)} мс`,
     )
 
     expect(записи).toHaveLength(50)
     expect(секции.reduce((s, x) => s + x.количество, 0)).toBe(50)
-    expect(план).toHaveLength(50)
     expect(чтениеМс).toBeLessThan(300)
     expect(группировкаМс).toBeLessThan(100)
   })
 
-  it('20 вещей в очереди оцифровки обрабатываются все', async () => {
-    for (let i = 0; i < 20; i += 1) await seedItem(`q-${i}`, `Вещь ${i}`)
-    const generate = vi.fn(okGenerate)
-    const очередь = new DigitizeQueue({
-      generate,
-      analyze: async () => MODEL,
-      measure,
-      id: uniqueAiIds(),
-      sleep: async () => {},
-    })
 
-    const t0 = performance.now()
-    await очередь.start()
-    const t1 = performance.now()
-    console.log(`[independent perf] 20 вещей в очереди: ${(t1 - t0).toFixed(1)} мс`)
-
-    expect(очередь.progress).toMatchObject({ всего: 20, успехов: 20, ошибок: 0, осталось: 0 })
-    expect(generate).toHaveBeenCalledTimes(20)
-    const состояние = await loadQueue()
-    expect(состояние?.задачи.filter((t) => t.статус === 'готово')).toHaveLength(20)
-  })
 })

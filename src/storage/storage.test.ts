@@ -9,7 +9,6 @@ import { ОшибкаВещьВОбразе, ОшибкаОригиналНеи�
 import * as images from './images'
 import * as items from './items'
 import * as outfits from './outfits'
-import { clearQueue, loadQueue, saveQueue, type СостояниеОчереди } from './queue'
 
 function makeItem(overrides: Partial<Вещь> = {}): Вещь {
   const now = new Date().toISOString()
@@ -65,30 +64,6 @@ function makeOutfit(
       zПорядок: index,
     })),
     датаСоздания: new Date().toISOString(),
-    ...overrides,
-  }
-}
-
-/** Состояние очереди оцифровки для тестов репозитория. */
-function makeQueueState(overrides: Partial<СостояниеОчереди> = {}): СостояниеОчереди {
-  const now = new Date().toISOString()
-  return {
-    id: 'active',
-    статус: 'остановлена',
-    задачи: [
-      {
-        id: 'вещь-1',
-        idВещи: 'вещь-1',
-        название: 'Худи тестовое',
-        способ: null,
-        статус: 'ожидает',
-        попытки: 0,
-        датаСоздания: now,
-        датаОбновления: now,
-      },
-    ],
-    датаНачала: now,
-    датаОбновления: now,
     ...overrides,
   }
 }
@@ -161,7 +136,7 @@ describe('Хранилище гардероба', () => {
     expect(await items.get('вещь-1')).toBeDefined()
   })
 
-  it('миграция v1→v2 на реальном upgrade() сохраняет вещи и добавляет стор queue', async () => {
+  it('миграция с версии 1 сохраняет данные, добавляет jobs и убирает стор queue (D16)', async () => {
     // Готовим базу версии 1 вручную: проверяется именно рабочий `upgrade()` из
     // `db.ts`, а не тестовая ветка с дополнительным стором.
     const db1 = await openDB<WardrobeDB>(DB_NAME, 1, { upgrade })
@@ -170,35 +145,21 @@ describe('Хранилище гардероба', () => {
       'images',
       makeImage('изобр-v1', 'вещь-v1', 'оригинал', '2024-01-01T00:00:00.000Z'),
     )
-    expect(db1.objectStoreNames.contains('queue')).toBe(false)
+    expect((db1.objectStoreNames as unknown as DOMStringList).contains('queue')).toBe(false)
     db1.close()
 
-    // `getDb()` открывает базу уже на DB_VERSION (2) и вызывает рабочий upgrade.
+    // `getDb()` открывает базу уже на DB_VERSION (4) и проводит все миграции.
     const db2 = await getDb()
     expect(db2.version).toBe(DB_VERSION)
-    expect(db2.objectStoreNames.contains('queue')).toBe(true)
+    // Стор очереди создавался в версии 2 и удалён в версии 4 — массовой
+    // оцифровки больше нет. Стор задач генерации остаётся.
+    expect((db2.objectStoreNames as unknown as DOMStringList).contains('queue')).toBe(false)
+    expect((db2.objectStoreNames as unknown as DOMStringList).contains('jobs')).toBe(true)
 
     // Данные версии 1 не потерялись.
     const вещь = await db2.get('items', 'вещь-v1')
     expect(вещь?.название).toBe('До миграции')
     expect(await db2.get('images', 'изобр-v1')).toBeDefined()
-  })
-
-  it('сохраняет и читает состояние очереди, переживая закрытие БД', async () => {
-    await saveQueue(makeQueueState({ последняяОшибка: 'Сеть недоступна' }))
-
-    await closeDb()
-
-    const loaded = await loadQueue()
-    expect(loaded?.id).toBe('active')
-    expect(loaded?.статус).toBe('остановлена')
-    expect(loaded?.задачи).toHaveLength(1)
-    expect(loaded?.задачи[0]?.idВещи).toBe('вещь-1')
-    expect(loaded?.задачи[0]?.статус).toBe('ожидает')
-    expect(loaded?.последняяОшибка).toBe('Сеть недоступна')
-
-    await clearQueue()
-    expect(await loadQueue()).toBeUndefined()
   })
 
   it('находит образы по сезону через индекс', async () => {

@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { deleteDB } from 'idb'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -18,25 +18,6 @@ import { AppRoutes } from '../App'
 vi.mock('../../services/wardrobe', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/wardrobe')>()
   return { ...actual, loadWardrobe: vi.fn(actual.loadWardrobe) }
-})
-
-// Очередь оцифровки в тесте стейла подменяет саму оцифровку: она должна создать
-// вырез в хранилище, а проверяем мы, что сетка перечитает изображения.
-const digitizeHook = vi.hoisted(() => ({ добавить: null as null | (() => Promise<void>) }))
-vi.mock('../../services/digitize', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../services/digitize')>()
-  return {
-    ...actual,
-    digitizeAuto: vi.fn(async (itemId: string) => {
-      await digitizeHook.добавить?.()
-      return {
-        itemId,
-        way: 'вырез' as const,
-        status: 'создано' as const,
-        image: undefined as unknown as Изображение,
-      }
-    }),
-  }
 })
 
 function makeItem(overrides: Partial<Вещь> = {}): Вещь {
@@ -207,45 +188,6 @@ describe('Экран гардероба (T13)', () => {
 
     const кнопкиСетки = regions.flatMap((region) => within(region).getAllByRole('button'))
     expect(кнопкиСетки).toHaveLength(50)
-  })
-
-  it('на непустом гардеробе есть панель массовой оцифровки', async () => {
-    await items.create(
-      makeItem({ id: 'вещь-1', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
-    )
-    renderWardrobe()
-
-    expect(await screen.findByRole('region', { name: 'Второй слой' })).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', { name: 'Оцифровать всё, где нет пакшота' }),
-    ).toBeInTheDocument()
-  })
-
-  it('после оцифровки сетка перечитывает данные и показывает новый вырез, а не прежний оригинал', async () => {
-    await items.create(
-      makeItem({ id: 'вещь-1', название: 'Пакшот', категория: 'Обувь', подкатегория: 'кроссовки' }),
-    )
-    await images.addOriginal(
-      makeImage('о-1', 'вещь-1', 'оригинал', '2024-01-01T00:00:00.000Z', 'orig'),
-    )
-
-    renderWardrobe()
-    expect(await screen.findByAltText('Пакшот')).toHaveAttribute('src', 'blob:orig')
-
-    // Мок оцифровки кладёт в хранилище точный вырез, пока идёт очередь.
-    digitizeHook.добавить = async () => {
-      await images.addCutout(
-        makeImage('в-1', 'вещь-1', 'вырез', '2024-01-02T00:00:00.000Z', 'cut'),
-      )
-    }
-
-    fireEvent.click(screen.getByRole('button', { name: 'Оцифровать всё, где нет пакшота' }))
-
-    // Сетка читает данные один раз при монтировании, но событие очереди
-    // заставляет её перечитать и показать свежий вырез.
-    await waitFor(() =>
-      expect(screen.getByAltText('Пакшот')).toHaveAttribute('src', 'blob:cut'),
-    )
   })
 
   it('вещь с AI-версией показывает AI, без неё — Оригинал (подставлен нужный blob)', async () => {

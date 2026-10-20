@@ -2,8 +2,9 @@
  * Оцифровка вещи (T10): генерация AI-версии и точный вырез пакшота.
  *
  * Оцифровка запускается **только явным действием** (раздел «Решения» тикета,
- * ADR-0002): кнопка «Сделать AI-версию» в карточке вещи и массовое «Оцифровать
- * всё, где нет пакшота» на экране гардероба. Фоновой генерации без нажатия нет.
+ * ADR-0002): кнопкой «Сделать AI-версию» в карточке вещи. Фоновой генерации
+ * без нажатия нет. Массовая оцифровка из гардероба убрана — оцифровка живёт
+ * только при добавлении вещи и в её карточке (D16).
  *
  * Два способа из ADR-0002:
  * - **пакшот** → точный вырез `cutoutBlob` (роль `вырез`), бесплатно и без искажений;
@@ -17,7 +18,7 @@
  * (`src/services/generation.ts` — `Idempotency-Key`, `taskId` в IndexedDB,
  * опрос каждые ~3 с, сеанс 5 минут) и только потом сохраняет картинку. Пока
  * задача живёт, её видно и правится с экрана статуса; закрытие вкладки её не
- * теряет — см. «Забрать готовое» в очереди.
+ * теряет — при следующем открытии карточка допрашивает ту же задачу.
  *
  * Инвариант «Оригинал не трогается» действует до успешной генерации: он только
  * читается. После успеха загруженный снимок-сырьё удаляется — сознательное
@@ -27,7 +28,7 @@
  * сохранённое, а проверка наличия роли делает повторный запуск идемпотентным.
  *
  * Сеть и canvas внедряются через {@link DigitizeDeps}: тесты не ходят в воркер
- * и не требуют canvas, а очередь (T12) подставляет туда свой `AbortSignal`.
+ * и не требуют canvas.
  */
 
 import type { ImageRole, Изображение, Вещь } from '../domain/types'
@@ -39,9 +40,7 @@ import { MAX_GENERATE_INPUT_BYTES } from './tidy-api'
 import { runGeneration } from './generation'
 import { canvasResize, MAX_IMAGE_SIDE } from './classify-photo'
 import { cutoutBlob, type CutoutBlobResult } from './cutout'
-import { analyzeImage, type PackshotAnalysis } from './wb/packshot'
 import { measureImage } from './import-item'
-import { loadWardrobe } from './wardrobe'
 import * as images from '../storage/images'
 import * as items from '../storage/items'
 import { removeJob } from '../storage/jobs'
@@ -63,12 +62,6 @@ export interface DigitizeDeps {
   generate?: (вещь: Вещь, reference: Blob, prompt: string, signal?: AbortSignal) => Promise<Blob>
   /** Точный вырез пакшота. По умолчанию — `cutoutBlob` (canvas). */
   cutout?: (blob: Blob) => Promise<CutoutBlobResult>
-  /**
-   * Проверка «пакшот ли Оригинал». По умолчанию — `analyzeImage` (canvas).
-   * Второй параметр — сама вещь: тестам и будущим эвристикам нужен контекст
-   * вещи, а не только пиксели.
-   */
-  analyze?: (blob: Blob, вещь: Вещь) => Promise<PackshotAnalysis>
   /** Размеры производного изображения. По умолчанию — `measureImage`. */
   measure?: (blob: Blob) => Promise<{ ширина: number; высота: number }>
   /** Текущее время, ISO-8601. Инжектируется для детерминированных тестов. */
@@ -85,8 +78,7 @@ export interface DigitizeDeps {
   /**
    * Принудительная перегенерация AI-версии (кнопка «Перегенерировать»).
    * При `true` уже существующая AI-версия заменяется новой; Оригинал при этом
-   * не трогается. По умолчанию `false` — повторный вызов идемпотентен, а
-   * массовая оцифровка (очередь, `digitizeMissing`) ничего не перегенерирует.
+   * не трогается. По умолчанию `false` — повторный вызов идемпотентен.
    */
   force?: boolean
   /**
@@ -135,10 +127,6 @@ function nowOf(deps: DigitizeDeps): string {
 
 function idOf(deps: DigitizeDeps): string {
   return (deps.id ?? newId)()
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 /**
@@ -258,7 +246,7 @@ function findRole(изображения: readonly Изображение[], р�
  * создаётся — возвращается существующая с `status: 'уже есть'`. При
  * `force: true` (кнопка «Перегенерировать») старая AI-версия удаляется, а её
  * место занимает свежая. Задача генерации после сохранения снимается
- * (`storage/jobs`), а при неудаче остаётся — её можно допросить или забрать.
+ * (`storage/jobs`), а при неудаче остаётся — её можно допросить из карточки.
  */
 export async function digitizeItem(
   itemId: string,
@@ -300,9 +288,6 @@ export async function digitizeItem(
  * Сохраняет готовую картинку генерации: кладёт AI-версию (заменяя старую при
  * перегенерации), удаляет сырьевой снимок по правилу ADR-0006 §4 и снимает
  * задачу генерации из `storage/jobs`.
- *
- * Общая для {@link digitizeItem} и кнопки «Забрать готовое»: обе дороги ведут
- * к одному и тому же сохранению, двойная AI-версия невозможна.
  */
 export async function saveGeneratedResult(
   itemId: string,
@@ -369,95 +354,3 @@ export async function digitizePackshot(
   return { itemId, way: 'вырез', status: 'создано', image }
 }
 
-/**
- * Автоматический выбор способа: пакшот → вырез, всё прочее → генерация
- * (правило T10/T12). Если вырез пакшота оказался подозрительным, честно
- * откатываемся на генерацию — вещь важнее сэкономленного запроса.
- */
-export async function digitizeAuto(
-  itemId: string,
-  deps: DigitizeDeps = {},
-): Promise<DigitizeOutcome> {
-  const { вещь, изображения, оригинал } = await loadItem(itemId)
-
-  const вырез = findRole(изображения, 'вырез')
-  if (вырез !== undefined) {
-    return { itemId, way: 'вырез', status: 'уже есть', image: вырез }
-  }
-  const ai = findRole(изображения, 'ai')
-  if (ai !== undefined) {
-    return { itemId, way: 'ai', status: 'уже есть', image: ai }
-  }
-  if (оригинал === undefined) {
-    // Ни выреза, ни AI-версии, а снимок удалён — генерировать и вырезать нечего.
-    throw new ОшибкаОцифровки('no_original', 'У вещи нет Оригинала — оцифровать её нельзя')
-  }
-
-  const analyze = deps.analyze ?? analyzeImage
-  const analysis = await analyze(оригинал.blob, вещь)
-  if (analysis.isPackshot) {
-    try {
-      return await digitizePackshot(itemId, deps)
-    } catch (error) {
-      if (error instanceof ОшибкаОцифровки && error.code === 'cutout_failed') {
-        return await digitizeItem(itemId, deps)
-      }
-      throw error
-    }
-  }
-  return await digitizeItem(itemId, deps)
-}
-
-// ---------------------------------------------------------------------------
-// Массовая оцифровка
-// ---------------------------------------------------------------------------
-
-/** Вещь, которой нужна оцифровка: у неё нет ни выреза, ни AI-версии. */
-export interface ПлановаяВещь {
-  id: string
-  название: string
-}
-
-/**
- * Список вещей для массовой оцифровки: без `вырез` и без `ai`. Вещь с вырезом
- * уже пригодна для коллажа, а с AI-версией — уже оцифрована; повторять нечего.
- */
-export async function itemsNeedingDigitization(): Promise<ПлановаяВещь[]> {
-  const entries = await loadWardrobe()
-  return entries
-    .filter(
-      ({ изображения }) =>
-        findRole(изображения, 'вырез') === undefined && findRole(изображения, 'ai') === undefined,
-    )
-    .map(({ вещь }) => ({ id: вещь.id, название: вещь.название.trim() || 'Без названия' }))
-}
-
-/** Итог по одной вещи в массовом прогоне: успех или понятная ошибка. */
-export interface MassDigitizeOutcome {
-  itemId: string
-  outcome?: DigitizeOutcome
-  error?: string
-}
-
-/**
- * Массовое действие «Оцифровать всё, где нет пакшота»: последовательный проход
- * по вещам без выреза и без AI-версии. Сбой одной вещи не прерывает остальные —
- * ошибка собирается в результат, а не бросается наружу.
- *
- * Это stateless-примитив: без ретраев, прогресса и персистентности. Массовая
- * кнопка в UI использует очередь T12 (`digitize-queue.ts`), которая делает то же
- * самое, но переживает закрытие приложения. Обе опираются на {@link digitizeAuto}.
- */
-export async function digitizeMissing(deps: DigitizeDeps = {}): Promise<MassDigitizeOutcome[]> {
-  const план = await itemsNeedingDigitization()
-  const результаты: MassDigitizeOutcome[] = []
-  for (const { id } of план) {
-    if (deps.signal?.aborted) break
-    try {
-      результаты.push({ itemId: id, outcome: await digitizeAuto(id, deps) })
-    } catch (error) {
-      результаты.push({ itemId: id, error: messageOf(error) })
-    }
-  }
-  return результаты
-}

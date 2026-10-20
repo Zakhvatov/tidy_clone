@@ -108,20 +108,6 @@ export interface GenerationRun {
   on(listener: (job: ЗадачаГенерации) => void): () => void
 }
 
-/** Результат «Забрать готовое»: одна из четырёх судеб задачи. */
-export type GrabResult =
-  | { state: 'нет' }
-  | { state: 'ждёт' }
-  | { state: 'готово'; blob: Blob }
-  | { state: 'не удалось'; message: string }
-
-/** Зависимости разового забора готового результата. */
-export interface GrabOptions {
-  status?: typeof getGenerationStatus
-  download?: typeof downloadGeneration
-  signal?: AbortSignal
-}
-
 // ---------------------------------------------------------------------------
 // Служебное
 // ---------------------------------------------------------------------------
@@ -417,46 +403,3 @@ async function пройти(
   }
 }
 
-// ---------------------------------------------------------------------------
-// «Забрать готовое»
-// ---------------------------------------------------------------------------
-
-/**
- * Разовый забор результата задачи, пережившей закрытие вкладки (ADR-0006).
- * Опроса нет: если задача ещё работает — ответ `ждёт`, без немедленной
- * загрузки картинки. Если прогон той же вещи идёт прямо сейчас, он сам всё
- * доведёт до конца — забор не нужен.
- */
-export async function grabGeneration(
-  idВещи: string,
-  options: GrabOptions = {},
-): Promise<GrabResult> {
-  if (активные.has(idВещи)) return { state: 'ждёт' }
-
-  const задача = await loadJob(idВещи)
-  if (задача === undefined || задача.taskId === undefined) return { state: 'нет' }
-  if (задача.статус === 'не удалось') {
-    return { state: 'не удалось', message: задача.последняяОшибка ?? TEXT_FAILED }
-  }
-
-  const status = options.status ?? getGenerationStatus
-  const download = options.download ?? downloadGeneration
-  const текущий = await status(задача.taskId, { signal: options.signal })
-  const верхний = normalizeStatus(текущий.status)
-
-  if (верхний === 'SUCCEEDED') {
-    const blob = await download(задача.taskId, { signal: options.signal })
-    return { state: 'готово', blob }
-  }
-  if (FAILED_STATUSES.has(верхний)) {
-    const обновлённая: ЗадачаГенерации = {
-      ...задача,
-      статус: 'не удалось',
-      последняяОшибка: TEXT_FAILED,
-      датаОбновления: new Date().toISOString(),
-    }
-    await saveJob(обновлённая)
-    return { state: 'не удалось', message: TEXT_FAILED }
-  }
-  return { state: 'ждёт' }
-}

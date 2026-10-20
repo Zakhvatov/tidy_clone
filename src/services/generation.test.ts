@@ -9,7 +9,6 @@ import {
   GENERATION_SESSION_MS,
   ОшибкаГенерации,
   activeGenerationRun,
-  grabGeneration,
   runGeneration,
   type GenerationRun,
 } from './generation'
@@ -315,92 +314,5 @@ describe('Асинхронная генерация (ADR-0006)', () => {
     const blob = await run.promise
     expect(await blobText(blob)).toBe('ai')
     expect(Date.now() - started).toBeLessThan(5_000)
-  })
-})
-
-describe('Забрать готовое (grabGeneration)', () => {
-  beforeEach(async () => {
-    await closeDb()
-    await deleteDB(DB_NAME)
-  })
-
-  afterEach(async () => {
-    await closeDb()
-    await deleteDB(DB_NAME)
-  })
-
-  async function saveГотовуюЗадачу(статус: ЗадачаГенерации['статус'] = 'ждёт'): Promise<void> {
-    await saveJob({
-      id: 'вещь-1',
-      idВещи: 'вещь-1',
-      ключ: 'вещь-1',
-      попытка: 1,
-      force: false,
-      статус,
-      taskId: 'task-1',
-      датаСеанса: new Date(0).toISOString(),
-      датаСоздания: new Date(0).toISOString(),
-      датаОбновления: new Date(0).toISOString(),
-    })
-  }
-
-  it('без задачи — «нет», без лишних запросов', async () => {
-    const d = deps({})
-    const результат = await grabGeneration('вещь-1', { status: d.status, download: d.download })
-    expect(результат).toEqual({ state: 'нет' })
-    expect(d.status).not.toHaveBeenCalled()
-  })
-
-  it('SUCCEEDED у провайдера — скачивание и готовая картинка', async () => {
-    await saveГотовуюЗадачу()
-    const d = deps({ statuses: ['SUCCEEDED'] })
-    const результат = await grabGeneration('вещь-1', { status: d.status, download: d.download })
-    expect(результат.state).toBe('готово')
-    if (результат.state === 'готово') expect(await blobText(результат.blob)).toBe('ai')
-    expect(d.download).toHaveBeenCalledWith('task-1', expect.anything())
-    // Забор не опрашивает задачу повторно и не заводит опрос: он разовый.
-    expect(activeGenerationRun('вещь-1')).toBeUndefined()
-  })
-
-  it('задача ещё работает — «ждёт», картинку не качает', async () => {
-    await saveГотовуюЗадачу()
-    const d = deps({ statuses: ['PROCESSING'] })
-    const результат = await grabGeneration('вещь-1', { status: d.status, download: d.download })
-    expect(результат).toEqual({ state: 'ждёт' })
-    expect(d.download).not.toHaveBeenCalled()
-  })
-
-  it('FAILED у провайдера — «не удалось», задача помечена в IndexedDB', async () => {
-    await saveГотовуюЗадачу()
-    const d = deps({ statuses: ['FAILED'] })
-    const результат = await grabGeneration('вещь-1', { status: d.status, download: d.download })
-    expect(результат.state).toBe('не удалось')
-    if (результат.state === 'не удалось') expect(результат.message).toContain('не смог')
-    expect(await loadJob('вещь-1')).toMatchObject({ статус: 'не удалось' })
-  })
-
-  it('задача уже в «не удалось» — ответ сразу, без запросов к провайдеру', async () => {
-    await saveГотовуюЗадачу('не удалось')
-    const d = deps({})
-    const результат = await grabGeneration('вещь-1', { status: d.status, download: d.download })
-    expect(результат.state).toBe('не удалось')
-    expect(d.status).not.toHaveBeenCalled()
-  })
-
-  it('идущий прогон той же вещи сам всё доведёт — забор отвечает «ждёт»', async () => {
-    // PENDING без завершения и длинная пауза: прогон живёт, пока тест не отменит его.
-    const d = deps({ statuses: ['PENDING'] })
-    const run = runGeneration(
-      'вещь-1',
-      baseOptions({ create: d.create, status: d.status, download: d.download, pollIntervalMs: 60_000 }),
-    )
-    await vi.waitFor(() => expect(run.job()?.статус).toBe('ждёт'))
-
-    const результат = await grabGeneration('вещь-1', { status: d.status, download: d.download })
-    expect(результат).toEqual({ state: 'ждёт' })
-    expect(d.download).not.toHaveBeenCalled()
-
-    run.abort()
-    await settled(run)
   })
 })

@@ -5,16 +5,15 @@ import {
 } from 'idb'
 
 import type { Изображение, Образ, Вещь } from '../domain/types'
-import type { СостояниеОчереди } from './queue'
 import type { ЗадачаГенерации } from './jobs'
 
 /** Имя базы на устройстве. */
 export const DB_NAME = 'wardrobe'
 
 /** Текущая версия схемы. Версия увеличивается вместе с новой веткой миграции. */
-export const DB_VERSION = 3
+export const DB_VERSION = 4
 
-/** Схема базы: сторы `items`, `images`, `outfits`, `queue` и их индексы. */
+/** Схема базы: сторы `items`, `images`, `outfits` и `jobs`. */
 export interface WardrobeDB extends DBSchema {
   items: {
     key: string
@@ -40,14 +39,6 @@ export interface WardrobeDB extends DBSchema {
     }
   }
   /**
-   * Персистентное состояние очереди оцифровки (T12). Добавлен в версии 2;
-   * на версии 1 стора не было, данные `items`/`images`/`outfits` не меняются.
-   */
-  queue: {
-    key: string
-    value: СостояниеОчереди
-  }
-  /**
    * Задачи асинхронной генерации AI-версии (ADR-0006). Добавлен в версии 3;
    * хранит `Idempotency-Key` и `taskId` провайдера, чтобы закрытие вкладки не
    * теряло ни оплаченную задачу, ни деньги.
@@ -59,7 +50,7 @@ export interface WardrobeDB extends DBSchema {
 }
 
 /** Схема версии 1. Вынесена, чтобы `upgrade` читался как список шагов. */
-function createSchemaV1(db: IDBPDatabase<WardrobeDB>): void {
+function createSchemaV1(db: IDBPDatabase): void {
   const items = db.createObjectStore('items', { keyPath: 'id' })
   items.createIndex('byКатегория', 'категория')
   items.createIndex('byДатаСоздания', 'датаСоздания')
@@ -76,7 +67,7 @@ function createSchemaV1(db: IDBPDatabase<WardrobeDB>): void {
  * Схема версии 2: добавляется стор `queue` (очередь оцифровки, T12).
  * Существующие сторы не пересоздаются — миграция только дополняет схему.
  */
-function createSchemaV2(db: IDBPDatabase<WardrobeDB>): void {
+function createSchemaV2(db: IDBPDatabase): void {
   if (db.objectStoreNames.contains('queue')) return
   db.createObjectStore('queue', { keyPath: 'id' })
 }
@@ -85,9 +76,18 @@ function createSchemaV2(db: IDBPDatabase<WardrobeDB>): void {
  * Схема версии 3: добавляется стор `jobs` (задачи асинхронной генерации,
  * ADR-0006). Существующие сторы не пересоздаются — миграция только дополняет.
  */
-function createSchemaV3(db: IDBPDatabase<WardrobeDB>): void {
+function createSchemaV3(db: IDBPDatabase): void {
   if (db.objectStoreNames.contains('jobs')) return
   db.createObjectStore('jobs', { keyPath: 'id' })
+}
+
+/**
+ * Схема версии 4: стор `queue` удаляется — массовой оцифровки в гардеробе
+ * больше нет (D16). Данные гардероба (`items`/`images`/`outfits`) и задачи
+ * генерации (`jobs`) не затрагиваются; очередь была служебной и одноразовой.
+ */
+function dropQueueV4(db: IDBPDatabase): void {
+  if (db.objectStoreNames.contains('queue')) db.deleteObjectStore('queue')
 }
 
 /**
@@ -102,17 +102,23 @@ export function upgrade(
   oldVersion: number,
   newVersion: number | null,
 ): void {
+  // Шаги миграции работают на «сырой» схеме: старые версии содержат сторы,
+  // которых больше нет в текущем `WardrobeDB` (например, удалённый `queue`).
+  const migrationDb = db as unknown as IDBPDatabase
   const targetVersion = newVersion ?? DB_VERSION
   for (let version = oldVersion; version < targetVersion; version += 1) {
     switch (version) {
       case 0:
-        createSchemaV1(db)
+        createSchemaV1(migrationDb)
         break
       case 1:
-        createSchemaV2(db)
+        createSchemaV2(migrationDb)
         break
       case 2:
-        createSchemaV3(db)
+        createSchemaV3(migrationDb)
+        break
+      case 3:
+        dropQueueV4(migrationDb)
         break
       default:
         // Шага для этой версии ещё нет — значит, миграции не требуется.
