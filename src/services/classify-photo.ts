@@ -28,6 +28,9 @@ import {
   CLASSIFY_PATH,
   DEFAULT_TIMEOUT_MS,
   TidyApiError,
+  base64Length,
+  blobToBase64,
+  mimeTypeOf,
   requestJson,
 } from './tidy-api'
 
@@ -43,6 +46,18 @@ export { TidyApiError as ClassifyError } from './tidy-api'
 export type { TidyApiErrorCode as ClassifyErrorCode } from './tidy-api'
 
 /**
+ * Кодировка base64 и MIME одна на всё общение с воркером — живут в tidy-api,
+ * отсюда реэкспортируются старым именам ради совместимости.
+ */
+export {
+  base64Length,
+  bytesToBase64,
+  blobToBase64,
+  blobToArrayBuffer,
+  mimeTypeOf,
+} from './tidy-api'
+
+/**
  * Лимит воркера на тело запроса — 4 МБ (`MAX_CLASSIFY_BODY_BYTES`). Считаем в
  * символах JSON, как это делает сам воркер, поэтому в лимит входит и base64,
  * и обвязка. base64 раздувает картинку примерно на треть, так что реальный
@@ -52,9 +67,6 @@ export const MAX_BODY_BYTES = 4 * 1024 * 1024
 
 /** Длинная сторона, до которой сжимаем фото перед отправкой (как у vision-провайдера). */
 export const MAX_IMAGE_SIDE = 2000
-
-/** Запас на `{"imageBase64":"...","mimeType":"image/jpeg"}` вокруг строки. */
-const JSON_OVERHEAD_BYTES = 128
 
 /** MIME, которые принимает воркер. */
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'])
@@ -92,53 +104,12 @@ export interface ClassifyPhotoOptions {
 // Размер и base64
 // ---------------------------------------------------------------------------
 
-/** Длина base64-строки без её построения. */
-export function base64Length(byteLength: number): number {
-  return Math.ceil(byteLength / 3) * 4
-}
+/** Запас на `{"imageBase64":"...","mimeType":"image/jpeg"}` вокруг строки. */
+const JSON_OVERHEAD_BYTES = 128
 
 /** Оценка размера JSON-тела до его сборки — чтобы не держать в памяти копию зря. */
 export function estimateBodyBytes(byteLength: number, overhead = JSON_OVERHEAD_BYTES): number {
   return base64Length(byteLength) + overhead
-}
-
-/**
- * Кодирует байты в base64 без `String.fromCharCode(...bytes)`: спред всего массива
- * упирается в лимит аргументов и раздувает стек. Идём кусками по 32 КиБ.
- */
-export function bytesToBase64(bytes: Uint8Array): string {
-  const chunkSize = 0x8000
-  let binary = ''
-  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    const chunk = bytes.subarray(offset, offset + chunkSize)
-    binary += String.fromCharCode(...chunk)
-  }
-  return btoa(binary)
-}
-
-/**
- * Читает Blob в ArrayBuffer. `Blob.arrayBuffer()` есть в браузерах и Node, но не в
- * старых webview и в jsdom — там работает FileReader.
- */
-async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
-  if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer()
-  return await new Promise<ArrayBuffer>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = () => reject(reader.error ?? new Error('Не удалось прочитать изображение'))
-    reader.onload = () => resolve(reader.result as ArrayBuffer)
-    reader.readAsArrayBuffer(blob)
-  })
-}
-
-/** Blob → base64 без промежуточной data-строки. */
-export async function blobToBase64(blob: Blob): Promise<string> {
-  return bytesToBase64(new Uint8Array(await blobToArrayBuffer(blob)))
-}
-
-/** MIME для воркера: пустой тип у Blob означает JPEG, чужие типы не отправляем. */
-export function mimeTypeOf(blob: Blob): string {
-  const declared = (blob.type || '').toLowerCase().split(';')[0]?.trim() ?? ''
-  return declared || 'image/jpeg'
 }
 
 // ---------------------------------------------------------------------------
@@ -149,8 +120,10 @@ export function mimeTypeOf(blob: Blob): string {
  * Ужимает изображение до `maxSide` по большей стороне и перекодирует в JPEG.
  * Нужна для фото с телефона: 12 Мп HEIC не влезет в лимит воркера, а для vision
  * 2000 px по длинной стороне достаточно. Требует `createImageBitmap` и canvas.
+ *
+ * Публичный с D13: тем же способом digitize сжимает Оригинал для i2i-генерации.
  */
-async function canvasResize(blob: Blob, maxSide: number): Promise<Blob> {
+export async function canvasResize(blob: Blob, maxSide: number): Promise<Blob> {
   if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') {
     throw new Error('canvas недоступен в этой среде')
   }

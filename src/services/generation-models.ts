@@ -40,17 +40,25 @@ const STORAGE_KEY = 'tidy:generation-model'
 const CACHE_TTL_MS = 30 * 60 * 1000
 
 /**
- * Запасной список — цены из публичного каталога IskraGen на момент T22.
+ * Запасной список — цены из публичного каталога провайдера на момент D13.
  * Он нужен, если воркер или каталог недоступны; заказ модели при этом работает.
+ * i2i-модели (D13) перечислены вместе с т2и — выбор и генерация по референсу
+ * не зависят от живого каталога.
  */
 export const FALLBACK_GENERATION_MODELS: readonly GenerationModel[] = [
   { slug: 'nano-banana-2-1', title: 'Nano Banana 2.1', priceRub: 4 },
   { slug: 'nano-banana-2-lite', title: 'Nano Banana 2 Lite', priceRub: 5 },
+  { slug: 'grok-imagine-image-2-0-image-edit', title: 'Grok Imagine 2.0 Edit', priceRub: 5 },
   { slug: 'grok-imagine-image-2-0-text-to-image', title: 'Grok Imagine 2.0', priceRub: 5 },
   { slug: 'grok-imagine-text-to-image', title: 'Grok Imagine', priceRub: 5 },
+  { slug: 'grok-imagine-image-to-image', title: 'Grok Imagine Image', priceRub: 5 },
+  { slug: 'flux-2-pro-image-to-image', title: 'Flux 2 Pro Image', priceRub: 6 },
   { slug: 'qwen3-text-to-image', title: 'Qwen Image 3.0', priceRub: 7 },
+  { slug: 'qwen3-image-to-image', title: 'Qwen Image 3.0 Image', priceRub: 7 },
   { slug: 'gpt-image-2-text-to-image', title: 'GPT Image 2', priceRub: 7 },
+  { slug: 'gpt-image-2-image-to-image', title: 'GPT Image 2 Image', priceRub: 7 },
   { slug: 'gpt-image-2-5-flare-text-to-image', title: 'GPT Image 2.5 Flare', priceRub: 7 },
+  { slug: 'gpt-image-2-5-flare-image-to-image', title: 'GPT Image 2.5 Flare Image', priceRub: 7 },
   { slug: 'nano-banana-2', title: 'Nano Banana 2', priceRub: 10 },
   { slug: 'midjourney-text-to-image', title: 'Midjourney', priceRub: 20 },
 ]

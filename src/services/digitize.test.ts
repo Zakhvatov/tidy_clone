@@ -302,3 +302,72 @@ describe('Оцифровка (T10)', () => {
     expect(error).toMatchObject({ code: 'not_found' })
   })
 })
+
+describe('i2i-оцифровка (D13)', () => {
+  beforeEach(async () => {
+    await closeDb()
+    await deleteDB(DB_NAME)
+  })
+
+  afterEach(async () => {
+    await closeDb()
+    await deleteDB(DB_NAME)
+  })
+
+  it('среда без читаемого Blob деградирует в текстовую генерацию с предупреждением', async () => {
+    await items.create(makeItem({ id: 'i2i-мёртвый' }))
+    await images.addOriginal(makeImage('ор-2', 'i2i-мёртвый', 'оригинал', 'pack'))
+
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        return new Response(new Blob(['ai'], { type: 'image/jpeg' }), {
+          status: 200,
+          headers: { 'content-type': 'image/jpeg' },
+        })
+      }),
+    )
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await digitizeItem('i2i-мёртвый', { id: () => 'ai-new' })
+      const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>
+      expect(body.imageBase64).toBeUndefined()
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('нечитаем'))
+    } finally {
+      warn.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('дефолтный путь шлёт redraw-промпт', async () => {
+    await items.create(makeItem({ id: 'i2i-вещь', категория: 'Второй слой', подкатегория: 'худи' }))
+    await images.addOriginal(makeImage('ор-1', 'i2i-вещь', 'оригинал', 'pack'))
+
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        calls.push({ url: String(url), init })
+        return new Response(new Blob(['ai'], { type: 'image/jpeg' }), {
+          status: 200,
+          headers: { 'content-type': 'image/jpeg' },
+        })
+      }),
+    )
+    try {
+      const outcome = await digitizeItem('i2i-вещь', { id: () => 'ai-new' })
+      expect(outcome.status).toBe('создано')
+      expect(outcome.way).toBe('ai')
+
+      const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>
+      expect(body.prompt).toContain('redraw')
+      expect(body.prompt).toContain('hoodie')
+      expect(body.prompt).toContain('full garment')
+      expect(body.prompt).not.toContain('colors:')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

@@ -9,6 +9,10 @@
  * - **пакшот** → точный вырез `cutoutBlob` (роль `вырез`), бесплатно и без искажений;
  * - **всё прочее** → генеративная перерисовка через воркер (роль `ai`).
  *
+ * С D13 перерисовка — image-to-image: Оригинал (сжатый) уходит референсом в
+ * `/generate` вместе с redraw-промптом, поэтому AI-версия повторяет дизайн,
+ * цвет и принты Оригинала, а не среднестатистическую вещь категории.
+ *
  * Инвариант: **Оригинал не трогается никогда** — он только читается. Производные
  * изображения добавляются через `storage/images` (`add`), поэтому повторная
  * оцифровка не перезаписывает уже сохранённое, а проверка наличия роли делает
@@ -21,8 +25,10 @@
 import type { ImageRole, Изображение, Вещь } from '../domain/types'
 // Промпт строится доменным модулем T11: шаблоны по категориям и перевод
 // атрибутов живут там, а не в сервисе — у промпта один источник истины.
-import { buildGenerationPrompt } from '../domain/prompt-templates'
-import { generateImage } from './tidy-api'
+// С D13 оцифровка шлёт redraw-промпт: модель получает Оригинал референсом.
+import { buildRedrawPrompt } from '../domain/prompt-templates'
+import { generateImage, MAX_GENERATE_INPUT_BYTES } from './tidy-api'
+import { canvasResize, MAX_IMAGE_SIDE } from './classify-photo'
 import { cutoutBlob, type CutoutBlobResult } from './cutout'
 import { analyzeImage, type PackshotAnalysis } from './wb/packshot'
 import { measureImage } from './import-item'
@@ -114,6 +120,20 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/**
+ * Референс для перерисовки: Оригинал, ужатый до лимита воркера (D13).
+ * Большие фото с телефона (3–30 МБ) сжимаются тем же способом, что и для
+ * распознавания — до 2000 px по длинной стороне, JPEG.
+ *
+ * Неизвестный размер (старые webview, тестовые клоны хранилища) не считается
+ * превышением: генерация сама проверит и ответит `image_too_large`, а мы не
+ * отнимаем сжатие у сред, где его нет.
+ */
+async function referenceForGeneration(blob: Blob): Promise<Blob> {
+  if (!(blob.size > MAX_GENERATE_INPUT_BYTES)) return blob
+  return await canvasResize(blob, MAX_IMAGE_SIDE)
+}
+
 /** Вещь вместе с её изображениями; `оригинал` уже найден и обязателен. */
 interface LoadedItem {
   вещь: Вещь
@@ -193,8 +213,9 @@ function findRole(изображения: readonly Изображение[], р�
 // ---------------------------------------------------------------------------
 
 /**
- * Явное действие «Сделать AI-версию»: строит промпт, зовёт `/generate` и
- * сохраняет результат с ролью `ai`. Оригинал только читается.
+ * Явное действие «Сделать AI-версию»: строит redraw-промпт, передаёт Оригинал
+ * референсом в `/generate` и сохраняет результат с ролью `ai`. Оригинал только
+ * читается.
  *
  * Идемпотентность: если AI-версия уже есть и `force` не задан, новая не
  * создаётся — возвращается существующая с `status: 'уже есть'`. При
@@ -211,7 +232,7 @@ export async function digitizeItem(
     return { itemId, way: 'ai', status: 'уже есть', image: существующая }
   }
 
-  const prompt = buildGenerationPrompt(вещь)
+  const prompt = buildRedrawPrompt(вещь)
   const generate = deps.generate
   const blob =
     generate === undefined
@@ -219,6 +240,7 @@ export async function digitizeItem(
           width: AI_FRAME_SIZE,
           height: AI_FRAME_SIZE,
           model: deps.model,
+          image: await referenceForGeneration(оригинал.blob),
           signal: deps.signal,
         })
       : await generate(вещь, оригинал.blob, prompt, deps.signal)

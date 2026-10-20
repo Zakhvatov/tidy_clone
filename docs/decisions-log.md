@@ -190,3 +190,42 @@ CSS-модули под `src/` и падает на любом `infinite` вне
   локальная сеть режет ответы >~19 КБ (D7).
 
 Бюджет проверки: 100 ₽ ≈ 14 кадров `gpt-image-2` (или 25 кадров `nano-banana-2-1`).
+
+## D13 · AI-версия — image-to-image: Оригинал уходит референсом (снимает D10)
+
+Причина: при входе «своё фото» (скрин) vision-модель извлекает только категорию, а
+redraw-промпт без цветов и состава рисовал абстрактную вещь категории — пользователь получает
+не своё худи. Пользователь решил перейти на image-to-image: провайдер IskraGen это умеет.
+
+Контракт провайдера (сверено с `https://iskragen.ru/docs/api-zagruzka-faylov` и живым
+каталогом `GET /v1/catalog/`, 20.10.2026):
+- входное изображение подаётся **ссылкой, не base64**: `POST /v1/files/` (multipart, поле
+  `file`, ≤ 30 МБ, 20 загрузок/мин, 3 одновременных) → `201 {url, ...}`;
+- ссылка подставляется в `params` под ключом из `paramsSchema` модели:
+  `input_urls` (Flux 2 Pro, GPT Image 2 / 2.5 Flare), `image_urls` (Grok, Qwen), `image_input`
+  (Nano Banana 2/2.1 — принимает до 10–14 референсов);
+- i2i-модели IMAGE: `nano-banana-2-1` 4 ₽, `grok-imagine-image-to-image` / `-2-0-image-edit` 5 ₽,
+  `flux-2-pro-image-to-image` 6 ₽, `qwen3-image-to-image` / `gpt-image-2-image-to-image` /
+  `gpt-image-2-5-flare-image-to-image` 7 ₽. Дефолт i2i — `nano-banana-2-1`.
+
+Как врезано:
+- **Воркер `tidy-api`**: `POST /generate` принимает непустой ` prompt` + опционально
+  `imageBase64` (data URL или чистый base64) + `mimeType` (jpeg/png/webp/bmp/gif/tiff).
+  С картинкой воркер сначала грузит референс в `/v1/files/`, затем создаёт генерацию с
+  `params[ключ модели] = [url]`. Потолок декодированных байтов — 8 МБ, тело — 12 МБ
+  (`MAX_GENERATE_INPUT_BYTES`/`MAX_GENERATE_BODY_BYTES` в `workers/api/src/config.ts`).
+  Сохранённый т2и-выбор с картинкой молча заменяется на i2i-дефолт (лог + честный
+  `x-tidy-model`), иначе старые выборы ломали бы весь поток оцифровки.
+- **Промпты** (`src/domain/prompt-templates.ts`): новый `buildRedrawPrompt(item)` —
+  «redraw the {вещь} from the reference image exactly, keep design/colors/print…», шаблон
+  полноты и обязательный хвост кадра. Цвета/состав не перечисляются: их несут пиксели референса.
+  `buildGenerationPrompt` остался для текстовых моделей и тестов.
+- **Оцифровка** (`src/services/digitize.ts`): дефолтный путь шлёт Оригинал референсом,
+  сжав большие фото тем же `canvasResize`, что и распознавание (до 2000 px, JPEG).
+  Нечитаемый Blob (jsdom + fake-indexeddb отдают мёртвый клон) — честная деградация в
+  текстовую генерацию с `console.warn`, а не сломанная оцифровка.
+- Каталог `GET /models` отдаёт 15 IMAGE-моделей; fallback-список клиента синхронизирован.
+
+Что осталось шагом человека: вписать ключ и прогнать живую i2i-генерацию по категориям
+(скрипт `tools/t11_generation_check.mjs` следует дополнить референсом); независимо от этого —
+наличие таймаут-бюджета на загрузку референса уже покрыто общим дедлайном 95 с.

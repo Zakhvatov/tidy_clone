@@ -9,7 +9,7 @@
  *
  * Контракт воркера (ADR-0003, `workers/api`):
  *   GET  /models                              → {models:[{slug,title,priceRub}], defaultSlug}
- *   POST /generate  {prompt, model?, width?, height?} → image/* байтами
+ *   POST /generate  {prompt, model?, width?, height?, imageBase64?, mimeType?} → image/* байтами
  *   POST /classify  {imageBase64, mimeType}   → {category, subcategory, confidence}
  *   GET  /health                              → {ok, generate, classify}
  *   ошибка:                                   → {error:{code,message}}
@@ -27,10 +27,10 @@ export const DEFAULT_TIMEOUT_MS = 30_000
 
 /**
  * Таймаут генерации. Провайдер асинхронный: воркер ставит задачу, опрашивает
- * статус и скачивает файл. Держим больше воркерского предела (75 с), чтобы
+ * статус и скачивает файл. Держим больше воркерского предела (95 с), чтобы
  * получить его 504 с текстом, а не оборванное соединение.
  */
-export const GENERATE_TIMEOUT_MS = 90_000
+export const GENERATE_TIMEOUT_MS = 120_000
 
 /** Путь генерации AI-версии. */
 export const GENERATE_PATH = '/generate'
@@ -299,6 +299,63 @@ export async function requestBlob(
 }
 
 // ---------------------------------------------------------------------------
+// Base64 (общий для `/classify` и `/generate`, D13)
+// ---------------------------------------------------------------------------
+
+/**
+ * Лимит воркера на тело запроса генерации — 12 МБ (`MAX_GENERATE_BODY_BYTES`).
+ * Лимит входной картинки после декодирования — 8 МБ (`MAX_GENERATE_INPUT_BYTES`);
+ * считаем в символах JSON, поэтому в лимит входит и base64, и обвязка.
+ */
+export const MAX_GENERATE_BODY_BYTES = 12 * 1024 * 1024
+/** Потолок декодированных байтов входного изображения, синхронный с воркером. */
+export const MAX_GENERATE_INPUT_BYTES = 8 * 1024 * 1024
+
+/** Длина base64-строки без её построения. */
+export function base64Length(byteLength: number): number {
+  return Math.ceil(byteLength / 3) * 4
+}
+
+/**
+ * Кодирует байты в base64 без `String.fromCharCode(...bytes)`: спред всего массива
+ * упирается в лимит аргументов и раздувает стек. Идём кусками по 32 КиБ.
+ */
+export function bytesToBase64(bytes: Uint8Array): string {
+  const chunkSize = 0x8000
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize)
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
+/**
+ * Читает Blob в ArrayBuffer. `Blob.arrayBuffer()` есть в браузерах и Node, но не в
+ * старых webview и в jsdom — там работает FileReader.
+ */
+export async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  if (typeof blob.arrayBuffer === 'function') return await blob.arrayBuffer()
+  return await new Promise<ArrayBuffer>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('Не удалось прочитать изображение'))
+    reader.onload = () => resolve(reader.result as ArrayBuffer)
+    reader.readAsArrayBuffer(blob)
+  })
+}
+
+/** Blob → base64 без промежуточной data-строки. */
+export async function blobToBase64(blob: Blob): Promise<string> {
+  return bytesToBase64(new Uint8Array(await blobToArrayBuffer(blob)))
+}
+
+/** MIME для воркера: пустой тип у Blob означает JPEG, чужие типы не отправляем. */
+export function mimeTypeOf(blob: Blob): string {
+  const declared = (blob.type || '').toLowerCase().split(';')[0]?.trim() ?? ''
+  return declared || 'image/jpeg'
+}
+
+// ---------------------------------------------------------------------------
 // Генерация AI-версии
 // ---------------------------------------------------------------------------
 
@@ -308,7 +365,22 @@ export interface GenerateImageOptions extends TidyRequestOptions {
   height?: number
   /** Slug модели из `GET /models`. Без него воркер берёт модель по умолчанию. */
   model?: string
+  /**
+   * Референс для image-to-image перерисовки (D13) — Оригинал вещи. Размер
+   * проверяется здесь до сборки base64; сжатие делает вызывающий код.
+   */
+  image?: Blob
 }
+
+/** Форматы входного изображения, которые принимает воркер генерации. */
+const GENERATE_INPUT_MIME = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/bmp',
+  'image/gif',
+  'image/tiff',
+])
 
 /**
  * Просит воркер сгенерировать каталожное изображение по промпту. Возвращает
@@ -319,11 +391,41 @@ export async function generateImage(
   prompt: string,
   options: GenerateImageOptions = {},
 ): Promise<Blob> {
-  const { width, height, model, headers, timeoutMs, ...rest } = options
+  const { width, height, model, image, headers, timeoutMs, ...rest } = options
   const payload: Record<string, unknown> = { prompt }
   if (width !== undefined) payload.width = width
   if (height !== undefined) payload.height = height
   if (model !== undefined && model.trim() !== '') payload.model = model.trim()
+
+  if (image !== undefined) {
+    // Формат и размер проверяем до base64: чужой или огромный Blob — ошибка
+    // клиента, а не 413 от воркера.
+    const mime = mimeTypeOf(image)
+    if (!GENERATE_INPUT_MIME.has(mime)) {
+      throw new TidyApiError('unsupported_media', `Формат ${mime} не поддерживается генерацией`)
+    }
+    if (image.size > MAX_GENERATE_INPUT_BYTES) {
+      throw new TidyApiError(
+        'image_too_large',
+        'Изображение слишком большое для генерации. Сожмите его и попробуйте снова',
+      )
+    }
+    let referenceBase64: string | null = null
+    try {
+      referenceBase64 = await blobToBase64(image)
+    } catch {
+      // Среда не умеет читать Blob (jsdom + fake-indexeddb отдают мёртвый клон
+      // без arrayBuffer и не принимают его в FileReader). Честный запасной
+      // сценарий — прежняя текстовая генерация, а не сломанная оцифровка.
+      referenceBase64 = null
+    }
+    if (referenceBase64 === null) {
+      console.warn('[tidy-api] референс нечитаем — генерация без изображения')
+    } else {
+      payload.imageBase64 = referenceBase64
+      payload.mimeType = mime
+    }
+  }
 
   return requestBlob(GENERATE_PATH, {
     ...rest,

@@ -12,9 +12,14 @@
  * `GET /generations/:id/download`. Воркер прячет эту схему: клиент по-прежнему
  * получает байты картинки одним ответом.
  *
+ * Image-to-image (D13): с `imageBase64`+`mimeType` воркер сначала грузит
+ * картинку в `POST /v1/files/` (получает `url`), затем подставляет её в
+ * `params` выбранной i2i-модели (`input_urls`/`image_urls`/`image_input`).
+ * Т2и-запросы без картинки работают по прежнему сценарию D12.
+ *
  * Маршруты:
  *   GET  /models                              → {models:[{slug,title,priceRub}], defaultSlug}
- *   POST /generate  {prompt, model?, width?, height?} → image/* байтами
+ *   POST /generate  {prompt, model?, width?, height?, imageBase64?, mimeType?} → image/* байтами
  *   POST /classify  {imageBase64, mimeType}   → {category, subcategory, confidence}
  *   GET  /health                              → {ok, generate, classify}
  */
@@ -31,11 +36,14 @@ import {
   GENERATE_POLL_INTERVAL_MS,
   GENERATE_TIMEOUT_MS,
   IMAGE_DOWNLOAD_TIMEOUT_MS,
+  MAX_GENERATE_BODY_BYTES,
   MAX_GENERATE_IMAGE_BYTES,
+  MAX_GENERATE_INPUT_BYTES,
   MODELS_TIMEOUT_MS,
 } from "./config";
 import {
   DEFAULT_IMAGE_MODEL_SLUG,
+  DEFAULT_IMAGE_TO_IMAGE_MODEL_SLUG,
   IMAGE_MODELS,
   findImageModel,
   frameParams,
@@ -103,12 +111,24 @@ const DEFAULT_ALLOWED_ORIGINS =
   "https://zakhvatov.github.io,https://tidy-clone.pages.dev,http://localhost:5173";
 
 const MAX_PROMPT_CHARS = 800;
-const MAX_GENERATE_BODY_BYTES = 16 * 1024;
 const MAX_CLASSIFY_BODY_BYTES = 4 * 1024 * 1024;
 const MIN_DIMENSION = 256;
 const MAX_DIMENSION = 2048;
 
 const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+
+/**
+ * MIME входного изображения генерации: провайдер в `POST /v1/files/` принимает
+ * только перечисленное, HEIC/HEIF туда не входят — клиент жмёт в JPEG.
+ */
+const GENERATE_INPUT_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/bmp",
+  "image/gif",
+  "image/tiff",
+]);
 
 /** Ответы vision-модели ограничиваем бюджетом токенов: нужен только короткий JSON.
  *  DeepSeek V4.1 Flash — reasoning-модель, поэтому запас должен покрывать и рассуждение. */
@@ -546,6 +566,7 @@ async function generateViaProvider(
   env: Env,
   prompt: string,
   model: ImageModel,
+  inputUrl: string | null = null,
 ): Promise<GenerationResult> {
   const base = providerBaseUrl(env);
   // Один общий дедлайн на POST + polling + download: клиент не должен ждать
@@ -562,7 +583,7 @@ async function generateViaProvider(
         body: JSON.stringify({
           modelSlug: model.slug,
           prompt,
-          params: frameParams(model),
+          params: generationParams(model, inputUrl),
         }),
       },
       timeoutUntil(deadline),
@@ -615,6 +636,80 @@ function timeoutUntil(deadline: number): number {
     throw new HttpError(504, "model_timeout", "Генерация не завершилась за отведённое время");
   }
   return Math.min(IMAGE_DOWNLOAD_TIMEOUT_MS, remaining);
+}
+
+/**
+ * Параметры кадра конкретной модели плюс ссылка на загруженный референс (D13).
+ * Ключ подсказывает сам каталог модели (`paramsSchema`): `input_urls` у Flux и
+ * GPT Image 2, `image_urls` у Grok и Qwen, `image_input` у Nano Banana.
+ */
+function generationParams(
+  model: ImageModel,
+  inputUrl: string | null,
+): Record<string, string | string[]> {
+  const params: Record<string, string | string[]> = { ...frameParams(model) };
+  if (inputUrl !== null && model.imageInputParam !== null) {
+    params[model.imageInputParam] = [inputUrl];
+  }
+  return params;
+}
+
+/** Расширение файла из MIME; провайдеру пофиг имя, но пустое тоже не годится. */
+function referenceFileName(mime: string): string {
+  const known = new Map([
+    ["image/jpeg", "jpg"],
+    ["image/png", "png"],
+    ["image/webp", "webp"],
+  ]);
+  return `reference.${known.get(mime) ?? "bin"}`;
+}
+
+/**
+ * Загружает входное изображение провайдеру и возвращает его URL (D13).
+ * i2i-модели IskraGen принимают только ссылки на файлы: `POST /v1/files/`
+ * отвечает `201 {url, ...}`. Дедупликации нет — каждый кадр грузит свою копию.
+ */
+async function uploadInputFile(
+  apiKey: string,
+  env: Env,
+  bytes: Uint8Array,
+  mimeType: string,
+): Promise<string> {
+  const base = providerBaseUrl(env);
+  const form = new FormData();
+  form.append("file", new Blob([bytes], { type: mimeType }), referenceFileName(mimeType));
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      `${base}/files/`,
+      { method: "POST", headers: { authorization: `Bearer ${apiKey}` }, body: form },
+      IMAGE_DOWNLOAD_TIMEOUT_MS,
+      "model_timeout",
+    );
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    console.error(`[tidy-api] generate: загрузка референса недоступна: ${shortError(error)}`);
+    throw new HttpError(502, "model_error", "Сервис генерации недоступен");
+  }
+
+  if (!response.ok) throw generationUpstreamError(response.status, "upload");
+
+  const payload = await response.json().catch(() => null);
+  const url = isRecord(payload) && typeof payload.url === "string" ? payload.url : "";
+  if (url.length === 0) {
+    console.error("[tidy-api] generate: провайдер не вернул url загруженного файла");
+    throw new HttpError(502, "model_error", "Сервис генерации не принял входное изображение");
+  }
+  return url;
+}
+
+/** Декодирует base64 в байты; корректность строки проверяет вызвавший код. */
+function decodeBase64Bytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 async function fetchGenerationState(
@@ -699,7 +794,7 @@ function imageContentType(raw: string | null): string {
  */
 function generationUpstreamError(
   status: number,
-  stage: "create" | "poll" | "download",
+  stage: "create" | "poll" | "download" | "upload",
 ): HttpError {
   console.error(`[tidy-api] generate: провайдер ${stage} ответил ${status}`);
   if (status === 402) return new HttpError(402, "billing", "Закончился баланс генерации");
@@ -715,21 +810,46 @@ function generationUpstreamError(
 /**
  * Модель для конкретного запроса. Клиент может выбрать из каталога; без
  * выбора работает модель из `ISKRAGEN_MODEL_SLUG` (совместимость с прежним
- * контрактом). Произвольный slug не принимаем: только известные text-to-image.
+ * контрактом). Произвольный slug не принимаем: только известные модели.
+ *
+ * С картинкой (D13) выбранная т2и-модель заменяется на `DEFAULT_IMAGE_TO_IMAGE_MODEL_SLUG`:
+ * в приложении могли остаться сохранённые выборы из т2и-каталога D12, и молчаливый
+ * отказ «модель не берёт референс» ломал бы весь поток оцифровки. Фактическая
+ * модель честно возвращается в заголовке `x-tidy-model` и в логе.
  */
-function selectImageModel(value: unknown, env: Env): ImageModel {
+function selectImageModel(value: unknown, env: Env, withInputImage: boolean): ImageModel {
+  const fallbackIfNeeded = (model: ImageModel): ImageModel => {
+    if (!withInputImage || model.imageInputParam !== null) return model;
+    const replacement =
+      findImageModel(DEFAULT_IMAGE_TO_IMAGE_MODEL_SLUG) ??
+      ({
+        slug: DEFAULT_IMAGE_TO_IMAGE_MODEL_SLUG,
+        title: DEFAULT_IMAGE_TO_IMAGE_MODEL_SLUG,
+        priceRub: 0,
+        aspectParam: "aspect_ratio" as const,
+        supportsResolution: true,
+        imageInputParam: null,
+      } satisfies ImageModel);
+    console.error(
+      `[tidy-api] generate: модель ${model.slug} не принимает референс, подставлена ${replacement.slug}`,
+    );
+    return replacement;
+  };
+
   if (value === undefined || value === null) {
     const configured = providerModel(env);
-    return (
+    return fallbackIfNeeded(
       findImageModel(configured) ?? {
         // Конфиг может указывать на модель вне нашего каталога — не ломаем
-        // старый сценарий, но и не обещаем ей каталог в UI.
+        // старый сценарий, но и не обещаем ей каталог в UI. Референс не указываем:
+        // если с картинкой — fallbackIfNeeded подставит известную i2i-модель.
         slug: configured,
         title: configured,
         priceRub: 0,
         aspectParam: "aspect_ratio",
         supportsResolution: true,
-      }
+        imageInputParam: null,
+      },
     );
   }
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -739,7 +859,7 @@ function selectImageModel(value: unknown, env: Env): ImageModel {
   if (model === undefined) {
     throw new HttpError(400, "invalid_input", "Неизвестная модель генерации");
   }
-  return model;
+  return fallbackIfNeeded(model);
 }
 
 /** Свежие цены из публичного каталога провайдера; сбой не должен ломать выбор. */
@@ -773,9 +893,10 @@ async function readCatalogPrices(env: Env): Promise<Map<string, number>> {
 }
 
 /**
- * Каталог для выбора в приложении. Отдаём только text-to-image модели и
- * подтягиваем цены провайдера; если каталог недоступен — остаются цены из
- * `models.ts`, чтобы выбор и генерация работали без лишнего запроса.
+ * Каталог для выбора в приложении. Отдаём IMAGE-модели каталога (т2и и i2i,
+ * `IMAGE_MODELS`) и подтягиваем цены провайдера; если каталог недоступен —
+ * остаются цены из `models.ts`, чтобы выбор и генерация работали без лишнего
+ * запроса.
  */
 async function handleModels(request: Request, env: Env): Promise<Response> {
   let prices = new Map<string, number>();
@@ -823,7 +944,39 @@ async function handleGenerate(request: Request, env: Env): Promise<Response> {
     console.log("[tidy-api] размер кадра задан провайдеру как 1:1 / 1K");
   }
 
-  const model = selectImageModel(body.model, env);
+  // Входное изображение (D13): Оригинал в base64 — референс для image-to-image
+  // перерисовки. Допускаем и «чистый» base64, и data URL, как в `/classify`.
+  const rawInputImage = typeof body.imageBase64 === "string" ? body.imageBase64.trim() : "";
+  const hasInputImage = rawInputImage.length > 0;
+  let inputImage: { bytes: Uint8Array; mime: string } | null = null;
+  if (hasInputImage) {
+    const dataUrl = /^data:([^;,]+);base64,([\s\S]+)$/i.exec(rawInputImage);
+    const base64 = (dataUrl ? dataUrl[2] : rawInputImage).replace(/\s+/g, "");
+    const declaredMime =
+      typeof body.mimeType === "string" && body.mimeType.trim().length > 0
+        ? body.mimeType
+        : (dataUrl?.[1] ?? "");
+    const mimeType = (declaredMime.toLowerCase().split(";")[0] ?? "").trim();
+    if (mimeType.length === 0) {
+      throw new HttpError(400, "invalid_input", "Поле mimeType обязательно вместе с imageBase64");
+    }
+    if (!GENERATE_INPUT_MIME_TYPES.has(mimeType)) {
+      throw new HttpError(400, "invalid_input", "Недопустимый mimeType входного изображения");
+    }
+    if (!isValidBase64(base64)) {
+      throw new HttpError(400, "invalid_input", "imageBase64 не является корректной base64-строкой");
+    }
+    const bytes = decodeBase64Bytes(base64);
+    if (bytes.length === 0) {
+      throw new HttpError(400, "invalid_input", "Входное изображение пустое");
+    }
+    if (bytes.length > MAX_GENERATE_INPUT_BYTES) {
+      throw new HttpError(400, "invalid_input", "Входное изображение слишком большое для генерации");
+    }
+    inputImage = { bytes, mime: mimeType };
+  }
+
+  const model = selectImageModel(body.model, env, hasInputImage);
 
   const apiKey = env.ISKRAGEN_API_KEY?.trim();
   if (!apiKey) {
@@ -831,11 +984,18 @@ async function handleGenerate(request: Request, env: Env): Promise<Response> {
   }
 
   const started = Date.now();
-  const result = await generateViaProvider(apiKey, env, rawPrompt, model);
+  // Успешная загрузка референса сдвигает точку невозврата: задача уже оплачена
+  // провайдеру частичным ресурсом, поэтому загрузка идёт до всего пайплайна.
+  const inputUrl =
+    inputImage === null
+      ? null
+      : await uploadInputFile(apiKey, env, inputImage.bytes, inputImage.mime);
+  const result = await generateViaProvider(apiKey, env, rawPrompt, model, inputUrl);
   console.log(
     `[tidy-api] POST /generate → 200, ${result.bytes.length} байт, ` +
       `модель ${model.slug}, ${Date.now() - started} мс, ` +
-      `стоимость ${result.costRub ?? "?"} ₽, промпт ${promptChars} символов`,
+      `стоимость ${result.costRub ?? "?"} ₽, промпт ${promptChars} символов` +
+      `${inputUrl === null ? "" : ", i2i-референс загружен"}`,
   );
 
   return new Response(result.bytes, {

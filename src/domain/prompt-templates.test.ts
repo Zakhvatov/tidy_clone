@@ -7,6 +7,7 @@ import {
   REQUIRED_PROMPT_FRAGMENTS,
   TOP_CATEGORIES_WITH_TEMPLATES,
   buildGenerationPrompt,
+  buildRedrawPrompt,
   garmentWord,
   templateFor,
   truncatePrompt,
@@ -170,5 +171,46 @@ describe('truncatePrompt', () => {
     const cut = truncatePrompt('x'.repeat(1000), 10)
     expect(cut.length).toBeLessThanOrEqual(10)
     expect(cut.length).toBeGreaterThan(0)
+  })
+})
+
+describe('buildRedrawPrompt (D13)', () => {
+  it('командует перерисовку референса и ни слова не переводит из атрибутов', () => {
+    const prompt = buildRedrawPrompt(sampleItem('Второй слой', 'худи'))
+    expect(prompt).toContain('redraw')
+    expect(prompt).toContain('reference image')
+    expect(prompt).toContain('hoodie')
+    expect(prompt).toContain('keep')
+    expect(prompt).not.toContain('colors:')
+    expect(prompt).not.toContain('material:')
+    expect(CYRILLIC.test(prompt)).toBe(false)
+    expect(prompt).not.toContain('Ванесса')
+  })
+
+  it('каждая вещь получает все обязательные требования кадра и полноту', () => {
+    for (const [top, subs] of Object.entries(TAXONOMY)) {
+      for (const sub of subs) {
+        const prompt = buildRedrawPrompt(sampleItem(top, sub))
+        for (const fragment of REQUIRED_PROMPT_FRAGMENTS) {
+          expect(prompt, `${top}/${sub} · ${fragment}`).toContain(fragment)
+        }
+        expect(prompt, `${top}/${sub} · полнота`).toMatch(/full|complete|whole/)
+      }
+    }
+  })
+
+  it('укладывается в лимит воркера для любого аргумента', () => {
+    for (const top of Object.keys(TAXONOMY)) {
+      for (const sub of [FALLBACK_SUB, ...(TAXONOMY[top as keyof typeof TAXONOMY] ?? [])]) {
+        const prompt = buildRedrawPrompt({ категория: top, подкатегория: sub })
+        expect(prompt.length, `${top}/${sub}`).toBeLessThanOrEqual(MAX_PROMPT_CHARS)
+      }
+    }
+    const long = buildRedrawPrompt({
+      категория: 'Нечто',
+      подкатегория: 'несуществующее',
+      название: 'A'.repeat(2000),
+    })
+    expect(long.length).toBeLessThanOrEqual(MAX_PROMPT_CHARS)
   })
 })

@@ -12,6 +12,8 @@ import {
   DEFAULT_FRAME_SIZE,
   GENERATE_POLL_INTERVAL_MS,
   GENERATE_TIMEOUT_MS,
+  MAX_GENERATE_BODY_BYTES,
+  MAX_GENERATE_INPUT_BYTES,
 } from "./config";
 import {
   FALLBACK_CATEGORY,
@@ -138,16 +140,21 @@ interface ProviderScript {
   states?: Response[];
   /** Ответ GET /generations/:id/download. */
   download?: Response;
+  /** Ответ POST /v1/files/ (загрузка i2i-референса). */
+  upload?: Response;
 }
 
 /**
- * Мок IskraGen: один `fetch` на три ручки. Возвращает мок, чтобы тесты могли
+ * Мок IskraGen: один `fetch` на четыре ручки. Возвращает мок, чтобы тесты могли
  * проверить тело запроса и заголовки.
  */
 function stubProvider(script: ProviderScript = {}) {
   const states = [...(script.states ?? [])];
   const fetchMock = vi.fn(async (input: Request | string | URL, _init?: RequestInit) => {
     const url = String(input);
+    if (url.endsWith("/files/")) {
+      return script.upload ?? jsonResponse({ url: "https://files.iskragen.test/in-ref", id: "f-1" }, 201);
+    }
     if (url.endsWith("/generations")) {
       return script.create ?? jsonResponse({ id: "gen-1", status: "SUCCEEDED", costRub: 7 }, 202);
     }
@@ -221,7 +228,7 @@ describe("GET /models", () => {
     ],
   };
 
-  it("отдаёт text-to-image модели с живыми ценами провайдера", async () => {
+  it("отдаёт IMAGE-модели (т2и и i2i) с живыми ценами провайдера", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(CATALOG)));
 
     const response = await handleRequest(get("/models", ORIGIN, CLIENT_TOKEN), iskraEnv());
@@ -235,8 +242,10 @@ describe("GET /models", () => {
     };
     expect(body.pricesLive).toBe(true);
     expect(body.defaultSlug).toBe("gpt-image-2-text-to-image");
-    expect(body.models).toHaveLength(9);
+    expect(body.models).toHaveLength(15);
     expect(body.models.find((m) => m.slug === "nano-banana-2-1")?.priceRub).toBe(3);
+    expect(body.models.find((m) => m.slug === "gpt-image-2-image-to-image")).toBeDefined();
+    expect(body.models.find((m) => m.slug === "flux-2-pro-image-to-image")).toBeDefined();
     expect(body.models.find((m) => m.slug === "midjourney-text-to-image")?.priceRub).toBe(25);
     expect(body.models.some((m) => m.slug === "some-video-model")).toBe(false);
   });
@@ -382,7 +391,9 @@ describe("клиентский токен", () => {
 // ---------------------------------------------------------------------------
 
 describe("ограничение тела на потоке", () => {
-  const LIMIT = 16 * 1024;
+  // Лимит тела теперь 12 МБ (D13: тело несёт входную картинку в base64),
+  // поэтому границу прощупываем на десятом мегабайте.
+  const LIMIT = MAX_GENERATE_BODY_BYTES;
 
   it("тело ровно на границе проходит", async () => {
     const body = generateBody(LIMIT);
@@ -496,10 +507,28 @@ describe("POST /generate: валидация", () => {
     expect((await errorBody(response)).code).toBe("invalid_input");
   });
 
-  it("слишком большое тело → 413", async () => {
-    const response = await handleRequest(post("/generate", { prompt: "x".repeat(20_000) }), iskraEnv());
+  it("промпт длиннее 800 символов → 400 invalid_input", async () => {
+    const response = await handleRequest(post("/generate", { prompt: "x".repeat(801) }), iskraEnv());
+    expect(response.status).toBe(400);
+    expect((await errorBody(response)).code).toBe("invalid_input");
+  });
+
+  it("тело больше 12 МБ даже с легальным промптом → 413", async () => {
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", padding: "y".repeat(MAX_GENERATE_BODY_BYTES) }),
+      iskraEnv(),
+    );
     expect(response.status).toBe(413);
     expect((await errorBody(response)).code).toBe("payload_too_large");
+  });
+
+  it("на границе i2i-лимита входная картинка проходит (маленький референс)", async () => {
+    stubProvider();
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", imageBase64: "AAAA", mimeType: "image/jpeg" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(200);
   });
 });
 
@@ -818,6 +847,159 @@ describe("POST /generate: выбор модели", () => {
     const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
     expect(response.status).toBe(200);
     expect(sentBody(fetchMock)).toMatchObject({ modelSlug: "gpt-image-2-text-to-image" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /generate — входное изображение (i2i, D13)
+// ---------------------------------------------------------------------------
+
+describe("POST /generate: входное изображение", () => {
+  function sentBody(fetchMock: ReturnType<typeof stubProvider>): Record<string, unknown> {
+    return JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
+  }
+
+  const OVER_LIMIT_BASE64 = "A".repeat(Math.ceil((MAX_GENERATE_INPUT_BYTES + 1) / 3) * 4);
+
+  it("upload идёт первым, затем create с референсом под ключом модели", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", imageBase64: "AAAA", mimeType: "image/jpeg" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(200);
+
+    const [uploadUrl, uploadInit] = fetchMock.mock.calls[0]!;
+    expect(String(uploadUrl)).toBe("https://api.iskragen.ru/v1/files/");
+    expect((uploadInit?.headers as Record<string, string>).authorization).toBe(`Bearer ${ISKRA_KEY}`);
+    expect(new Headers(uploadInit?.headers).has("content-type")).toBe(false);
+    const file = (uploadInit?.body as FormData).get("file") as File;
+    expect(file.name).toBe("reference.jpg");
+    expect(file.type).toBe("image/jpeg");
+
+    expect(sentBody(fetchMock)).toEqual({
+      // Конфигурация указывает на gpt-image-2-text-to-image — она не берёт
+      // референс, поэтому воркер подставил дешёвую i2i-модель.
+      modelSlug: "nano-banana-2-1",
+      prompt: "hoodie",
+      params: {
+        aspect_ratio: "1:1",
+        resolution: "1K",
+        image_input: ["https://files.iskragen.test/in-ref"],
+      },
+    });
+    expect(response.headers.get("x-tidy-model")).toBe("nano-banana-2-1");
+  });
+
+  it("явно выбранная i2i-модель получает свой ключ референса", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(
+      post("/generate", {
+        prompt: "hoodie",
+        imageBase64: "AAAA",
+        mimeType: "image/jpeg",
+        model: "gpt-image-2-image-to-image",
+      }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(200);
+    const create = fetchMock.mock.calls[1]!;
+    expect(String(create[0])).toBe("https://api.iskragen.ru/v1/generations");
+    expect(JSON.parse(String(create[1]?.body))).toMatchObject({
+      modelSlug: "gpt-image-2-image-to-image",
+      params: {
+        aspect_ratio: "1:1",
+        resolution: "1K",
+        input_urls: ["https://files.iskragen.test/in-ref"],
+      },
+    });
+  });
+
+  it("сохранённый т2и-выбор с картинкой заменяется и об этом пишется в лог", async () => {
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const fetchMock = stubProvider();
+      await handleRequest(
+        post("/generate", {
+          prompt: "hoodie",
+          imageBase64: "AAAA",
+          mimeType: "image/jpeg",
+          model: "gpt-image-2-text-to-image",
+        }),
+        iskraEnv(),
+      );
+      expect(sentBody(fetchMock).modelSlug).toBe("nano-banana-2-1");
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("не принимает референс"));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("imageBase64 без mimeType → 400", async () => {
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", imageBase64: "AAAA" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(400);
+    expect((await errorBody(response)).code).toBe("invalid_input");
+  });
+
+  it("HEIC не принимается провайдером → 400", async () => {
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", imageBase64: "AAAA", mimeType: "image/heic" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("битый base64 → 400 до обращения к провайдеру", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", imageBase64: "!!!", mimeType: "image/jpeg" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("референс больше 8 МБ → 400", async () => {
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", imageBase64: OVER_LIMIT_BASE64, mimeType: "image/jpeg" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("провайдер не вернул url файла → 502 model_error", async () => {
+    stubProvider({ upload: jsonResponse({ contentType: "image/jpeg" }, 201) });
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", imageBase64: "AAAA", mimeType: "image/jpeg" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(502);
+    expect((await errorBody(response)).code).toBe("model_error");
+  });
+
+  it("сбой загрузки референса → 502 model_error", async () => {
+    stubProvider({ upload: jsonResponse({ error: { code: "API_ERROR" } }, 500) });
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", imageBase64: "AAAA", mimeType: "image/jpeg" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(502);
+    expect((await errorBody(response)).code).toBe("model_error");
+  });
+
+  it("генерация не начинается, если загрузка референса не удалась", async () => {
+    const fetchMock = stubProvider({ upload: new Response("no space", { status: 500 }) });
+    await handleRequest(
+      post("/generate", { prompt: "hoodie", imageBase64: "AAAA", mimeType: "image/jpeg" }),
+      iskraEnv(),
+    );
+    const generationCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes("/generations"),
+    );
+    expect(generationCalls).toHaveLength(0);
   });
 });
 

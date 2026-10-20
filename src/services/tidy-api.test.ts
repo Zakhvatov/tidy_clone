@@ -185,6 +185,72 @@ describe('tidy-api: заголовок и генерация', () => {
     })
   })
 
+  it('generateImage шлёт референс для i2i (D13)', async () => {
+    const jpeg = new Response(new Uint8Array([1]), {
+      status: 200,
+      headers: { 'content-type': 'image/jpeg' },
+    })
+    const { impl, calls } = fakeFetch(jpeg)
+    await generateImage('redraw hoodie', {
+      fetchImpl: impl,
+      baseUrl: 'https://worker.test',
+      image: new Blob(['orig'], { type: 'image/png' }),
+    })
+    expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({
+      prompt: 'redraw hoodie',
+      imageBase64: 'b3JpZw==',
+      mimeType: 'image/png',
+    })
+  })
+
+  it('нечитаемый референс деградирует в текстовую генерацию с предупреждением', async () => {
+    const jpeg = new Response(new Uint8Array([1]), {
+      status: 200,
+      headers: { 'content-type': 'image/jpeg' },
+    })
+    const { impl, calls } = fakeFetch(jpeg)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const deadBlob = {} as Blob
+      await generateImage('redraw hoodie', {
+        fetchImpl: impl,
+        baseUrl: 'https://worker.test',
+        image: deadBlob,
+      })
+      const body = JSON.parse(String(calls[0]?.init?.body)) as Record<string, unknown>
+      expect(body.imageBase64).toBeUndefined()
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('нечитаем'))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('слишком большой референс → image_too_large без запроса', async () => {
+    const { impl, calls } = fakeFetch(new Response(null, { status: 500 }))
+    const big = new Blob([new Uint8Array([1])], { type: 'image/png' })
+    Object.defineProperty(big, 'size', { value: 8 * 1024 * 1024 + 1 })
+    const error = await generateImage('hoodie', {
+      fetchImpl: impl,
+      baseUrl: 'https://worker.test',
+      image: big,
+    }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(TidyApiError)
+    expect((error as TidyApiError).code).toBe('image_too_large')
+    expect(calls).toHaveLength(0)
+  })
+
+  it('неподдерживаемый формат референса → unsupported_media', async () => {
+    const { impl, calls } = fakeFetch(new Response(null, { status: 500 }))
+    const error = await generateImage('hoodie', {
+      fetchImpl: impl,
+      baseUrl: 'https://worker.test',
+      image: new Blob([new Uint8Array([1])], { type: 'image/heic' }),
+    }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(TidyApiError)
+    expect((error as TidyApiError).code).toBe('unsupported_media')
+    expect(calls).toHaveLength(0)
+  })
+
   it('JSON вместо картинки и пустой ответ → invalid_response', async () => {
     const asJson = fakeFetch(jsonResponse(200, { error: { code: 'internal_error' } }))
     const jsonError = await requestBlob('/generate', { fetchImpl: asJson.impl }).catch((e: unknown) => e)

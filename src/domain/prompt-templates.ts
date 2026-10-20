@@ -8,6 +8,10 @@
  *      хвост (вид спереди, по центру, белый фон, каталожное фото, без человека,
  *      без текста/водяных знаков).
  *
+ * С D13 у generation два промпта: {@link buildGenerationPrompt} описывает вещь
+ * с нуля (текстовая модель), {@link buildRedrawPrompt} командует перерисовку
+ * Оригинала, переданного референсом (image-to-image).
+ *
  * Модуль чистый: ни сети, ни React, ни DOM — только строки. Промпт англоязычный,
  * потому что модель англоязычная. Русские слова в промпт не попадают: названия и
  * цвета переводятся словарями, а нераспознанное отбрасывается (транслитерация
@@ -323,5 +327,24 @@ export function buildGenerationPrompt(item: PromptItem): string {
   const tokens = latinTokens(item.название)
   if (tokens.length > 0) parts.push(`item type: ${tokens.join(' ')}`)
 
+  return truncatePrompt(parts.join(', '), MAX_PROMPT_CHARS)
+}
+
+/**
+ * Промпт перерисовки по референсу (D13): модель получает Оригинал картинкой,
+ * поэтому промпт больше не описывает вещь с нуля, а задаёт паспортный вид —
+ * что сохранить и какой кадр сделать.
+ *
+ * Слово-вещь остаётся: помогает модели понять, какой объект в кадре её волнует
+ * (скрин может содержать фон, руки, лишние вещи). Цвета и состав не перечисляются:
+ * их несут пиксели референса, а перечисление может начать конфликтовать с ним.
+ */
+export function buildRedrawPrompt(item: PromptItem): string {
+  const parts = [
+    `redraw the ${garmentWord(item)} from the reference image exactly`,
+    'keep its design, colors, pattern, print, material look and proportions unchanged',
+    templateFor(item.категория),
+    REQUIRED_SUFFIX,
+  ]
   return truncatePrompt(parts.join(', '), MAX_PROMPT_CHARS)
 }
