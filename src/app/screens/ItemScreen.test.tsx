@@ -250,6 +250,27 @@ describe('Карточка вещи (T15)', () => {
     expect(await items.get('вещь-1')).toBeDefined()
   })
 
+  it('подтверждение удаления: alertdialog, фокус на «Отмена», Escape возвращает фокус на «Удалить вещь»', async () => {
+    await items.create(makeItem({ id: 'вещь-1' }))
+    await images.addOriginal(
+      makeImage('о-1', 'вещь-1', 'оригинал', '2024-03-05T10:00:00.000Z', 'orig'),
+    )
+
+    renderItem('вещь-1')
+
+    const удалитьВещьКнопка = await screen.findByRole('button', { name: 'Удалить вещь' })
+    fireEvent.click(удалитьВещьКнопка)
+
+    const диалог = screen.getByRole('alertdialog', { name: 'Подтверждение удаления' })
+    expect(диалог).toHaveAttribute('aria-modal', 'true')
+    expect(screen.getByRole('button', { name: 'Отмена' })).toHaveFocus()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    await waitFor(() => expect(удалитьВещьКнопка).toHaveFocus())
+  })
+
   it('свободная вещь удаляется каскадом вместе с оригиналом и AI-версией', async () => {
     await items.create(makeItem({ id: 'вещь-1' }))
     await images.addOriginal(

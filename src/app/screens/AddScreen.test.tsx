@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { deleteDB } from 'idb'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -144,6 +144,28 @@ describe('Экран добавления вещи (T8 + ADR-0006)', () => {
     expect(screen.getByText('Загрузить фото')).toBeInTheDocument()
     expect(screen.queryByRole('textbox', { name: 'Ссылка на товар' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Найти вещь' })).toBeNull()
+  })
+
+  it('пока идёт распознавание, загрузка фото недоступна и показывает прогресс', async () => {
+    let ответить: ((response: Response) => void) | undefined
+    const классификация = new Promise<Response>((resolve) => {
+      ответить = resolve
+    })
+    vi.stubGlobal('fetch', vi.fn(() => классификация) as unknown as typeof fetch)
+    renderAdd()
+
+    const input = screen.getByLabelText('Загрузить фото') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [фото()] } })
+
+    expect(input).toBeDisabled()
+    expect(input.closest('label')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByText('Загружаем и распознаём фото…')).toBeInTheDocument()
+
+    await waitFor(() => expect(ответить).toBeTypeOf('function'))
+    ответить!(jsonResponse(200, { category: 'Обувь', subcategory: 'кроссовки', confidence: 0.9 }))
+    await screen.findByRole('heading', { name: 'Без названия' })
+
+    expect(input).not.toBeDisabled()
   })
 
   it('по фото берёт категорию у vision; вещь сохраняется до генерации', async () => {

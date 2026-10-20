@@ -1,18 +1,19 @@
 .block {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   padding: 14px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
-  background: var(--color-bg);
+  background: var(--color-surface);
   animation: generation-status-in var(--motion-base) var(--motion-ease);
 }
 
 .text {
   display: flex;
+  flex: 1 1 220px;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
@@ -23,53 +24,60 @@
   color: var(--color-text);
   font-size: 15px;
   font-weight: 600;
+  line-height: 1.35;
 }
 
 .meta {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
 .hint {
   margin: 0;
   color: var(--color-text-secondary);
   font-size: 13px;
+  line-height: 1.4;
 }
 
 .actions {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   gap: 8px;
+  margin-left: auto;
 }
 
 .primary,
 .secondary {
+  min-height: var(--tap-min);
   padding: 10px 18px;
   border-radius: var(--radius-pill);
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--motion-ease);
 }
 
 .primary {
-  border: 1px solid var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-bg);
+  border: 1px solid var(--color-accent-strong);
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
 }
 
 .primary:active {
-  background: color-mix(in srgb, var(--color-accent) 85%, black);
+  background: color-mix(in srgb, var(--color-accent-strong) 85%, black);
 }
 
 .secondary {
   border: 1px solid var(--color-border);
-  background: transparent;
+  background: var(--color-bg);
   color: var(--color-text);
 }
 
 .secondary:active {
-  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  background: var(--color-surface);
 }
 
 @keyframes generation-status-in {
@@ -86,5 +94,10 @@
 @media (prefers-reduced-motion: reduce) {
   .block {
     animation: none;
+  }
+
+  .primary,
+  .secondary {
+    transition: none;
   }
 }

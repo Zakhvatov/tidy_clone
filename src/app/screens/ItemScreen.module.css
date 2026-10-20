@@ -1,3 +1,14 @@
+/*
+ * Карточка вещи: крупное изображение, спокойная типографика и липкая панель
+ * действий над нижней навигацией. Панель отнимает место у контента, поэтому
+ * экран получает собственный нижний отступ — ничего не прячется под кнопками.
+ */
+
+.screen {
+  /* 77px — высота панели действий, 20px — просвет до неё. */
+  padding-bottom: calc(77px + 20px);
+}
+
 .header {
   display: flex;
   flex-direction: column;
@@ -6,7 +17,8 @@
 }
 
 .back {
-  padding: 8px 14px;
+  min-height: var(--tap-min);
+  padding: 10px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-bg);
@@ -20,16 +32,16 @@
   background: var(--color-surface);
 }
 
-.card {
+.item {
   display: flex;
   flex-direction: column;
   gap: var(--space-section);
 }
 
-.imageBlock {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+/* Изображение почти во всю ширину экрана: отрицательные поля компенсируют
+   боковой отступ контента AppLayout, скругления остаются общими. */
+.hero {
+  margin-inline: calc(var(--space-edge) * -1);
 }
 
 .imageFrame {
@@ -37,8 +49,7 @@
   align-items: center;
   justify-content: center;
   width: 100%;
-  /* Большое изображение карточки: место занято сразу, вёрстка не прыгает. */
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 4 / 5;
   border-radius: var(--radius-card);
   background: var(--color-surface);
   overflow: hidden;
@@ -50,42 +61,99 @@
   object-fit: contain;
 }
 
-.aiBadge {
-  align-self: flex-start;
-  margin: 0;
-  padding: 6px 12px;
-  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
-  color: var(--color-accent);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.switcher {
+.titleRow {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.name {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.aiBadge {
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 38%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  color: var(--color-accent-strong);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* Сегментированный переключатель: один общий трек, равные сегменты,
+   каждый не ниже 44px — попадать пальцем можно в любой. */
+.switcher {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
 }
 
 .switchOption {
-  padding: 10px 16px;
-  border: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap-min);
+  padding: 8px 10px;
+  border: 0;
   border-radius: var(--radius-pill);
-  background: var(--color-bg);
+  background: transparent;
   color: var(--color-text);
-  font-size: 15px;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
   transition:
     background var(--motion-fast) var(--motion-ease),
-    border-color var(--motion-fast) var(--motion-ease),
     color var(--motion-fast) var(--motion-ease);
 }
 
 .switchOptionActive {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: #ffffff;
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
+  font-weight: 600;
+}
+
+/* Спецификация в две колонки: подпись сверху, значение снизу. */
+.attrs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+  margin: 0;
+}
+
+.attr {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.attrLabel {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.attrValue {
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 .chips {
@@ -95,7 +163,8 @@
 }
 
 .chip {
-  padding: 9px 15px;
+  min-height: var(--tap-min);
+  padding: 10px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-chip);
   background: var(--color-bg);
@@ -109,40 +178,9 @@
 }
 
 .chipActive {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: #ffffff;
-}
-
-.name {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.attrs {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-}
-
-.attr {
-  display: flex;
-  gap: 10px;
-  font-size: 16px;
-}
-
-.attrLabel {
-  flex: 0 0 104px;
-  color: var(--color-text-secondary);
-}
-
-.attrValue {
-  min-width: 0;
-  margin: 0;
-  word-break: break-word;
+  border-color: var(--color-accent-strong);
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
 }
 
 .section {
@@ -153,37 +191,49 @@
 
 .sectionTitle {
   margin: 0;
-  color: var(--color-text-secondary);
-  font-size: 13px;
+  color: var(--color-text);
+  font-size: 17px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: -0.01em;
 }
 
-.generateRow {
+/* Липкая панель: над нижней навигацией AppLayout, с фоном и волосяной линией.
+   `--nav-offset` уже включает высоту таб-бара и safe-area снизу. */
+.actionBar {
+  position: fixed;
+  right: 0;
+  bottom: var(--nav-offset);
+  left: 0;
+  z-index: var(--z-bar);
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px calc(var(--safe-right) + var(--space-edge)) 12px
+    calc(var(--safe-left) + var(--space-edge));
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg) 94%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.actionRow {
+  display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .generate {
-  align-self: flex-start;
-  padding: 14px 20px;
+  flex: 1 1 auto;
+  min-height: var(--tap-comfortable);
+  padding: 12px 18px;
   border: none;
   border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  color: #ffffff;
-  font-size: 16px;
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
   transition: opacity var(--motion-fast) var(--motion-ease);
-}
-
-.generatePrice {
-  color: var(--color-text-secondary);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
 }
 
 .generate:active {
@@ -196,13 +246,14 @@
 }
 
 .danger {
-  align-self: flex-start;
-  padding: 14px 20px;
+  flex: 0 0 auto;
+  min-height: var(--tap-comfortable);
+  padding: 12px 18px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-bg);
-  color: var(--color-accent);
-  font-size: 16px;
+  color: var(--color-accent-strong);
+  font-size: 15px;
   font-weight: 600;
   cursor: pointer;
   transition: background var(--motion-fast) var(--motion-ease);
@@ -212,39 +263,45 @@
   background: var(--color-surface);
 }
 
+/* Подтверждение — не модальное окно поверх всего, а раскрытая часть панели:
+   оно остаётся на экране и не требует прокрутки к удалённой секции. */
 .confirm {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: var(--space-edge);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
   border-radius: var(--radius-card);
-  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg));
 }
 
 .confirmText {
   margin: 0;
   font-size: 15px;
+  line-height: 1.4;
 }
 
 .confirmActions {
   display: flex;
+  justify-content: flex-end;
   gap: 10px;
 }
 
 .confirmDelete {
-  padding: 12px 18px;
+  min-height: var(--tap-min);
+  padding: 11px 18px;
   border: none;
   border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  color: #ffffff;
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .confirmCancel {
-  padding: 12px 18px;
+  min-height: var(--tap-min);
+  padding: 11px 18px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-bg);
@@ -271,4 +328,14 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
   background: var(--color-surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .back,
+  .switchOption,
+  .chip,
+  .generate,
+  .danger {
+    transition: none;
+  }
 }

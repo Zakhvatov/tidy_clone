@@ -14,7 +14,7 @@ const asset = (path: string) => `${appBase}${path.replace(/^\//, '')}`
 export const manifest: Partial<ManifestOptions> = {
   name: 'Гардероб',
   short_name: 'Гардероб',
-  description: 'Личный цифровой гардероб: вещи по ссылке или фото, образы и офлайн-режим.',
+  description: 'Личный цифровой гардероб: вещи по фото, AI-версии, образы и офлайн-режим.',
   lang: 'ru',
   dir: 'ltr',
   display: 'standalone',

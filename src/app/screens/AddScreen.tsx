@@ -5,7 +5,7 @@ import screenStyles from './Screen.module.css'
 
 /**
  * Экран добавления вещи (T8). Сама форма вынесена в `AddItemForm`, чтобы её же
- * показывал пустой гардероб на `/` (решение O7 «первый экран — поле ссылки»).
+ * показывал пустой гардероб на `/` (решение O7 «первый экран — добавление фото»).
  */
 export function AddScreen() {
   const navigate = useNavigate()

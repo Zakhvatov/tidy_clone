@@ -208,12 +208,11 @@ describe('Список образов (T18)', () => {
     await outfits.create(
       makeOutfit({ id: 'образ-1', название: 'Осенний', элементы: [элемент('в-1', 0)] }),
     )
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-
     renderOutfits()
     await screen.findByRole('list')
 
     fireEvent.click(screen.getByRole('button', { name: 'Удалить Осенний' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить' }))
 
     expect(await screen.findByText('Образов пока нет')).toBeInTheDocument()
     await waitFor(async () => {
@@ -225,27 +224,52 @@ describe('Список образов (T18)', () => {
   it('удаление образа убирает его подложку из localStorage', async () => {
     await outfits.create(makeOutfit({ id: 'образ-1', название: 'Осенний' }))
     localStorage.setItem('tidy.outfit.background.образ-1', '#EDEDEA')
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     renderOutfits()
     await screen.findByRole('list')
 
     fireEvent.click(screen.getByRole('button', { name: 'Удалить Осенний' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить' }))
 
     await waitFor(() => {
       expect(localStorage.getItem('tidy.outfit.background.образ-1')).toBeNull()
     })
   })
 
-  it('отмена подтверждения оставляет образ на месте', async () => {
+  it('отмена подтверждения оставляет образ на месте и возвращает фокус на «Удалить»', async () => {
     await outfits.create(makeOutfit({ id: 'образ-1', название: 'Осенний' }))
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
 
     renderOutfits()
     await screen.findByRole('list')
 
     fireEvent.click(screen.getByRole('button', { name: 'Удалить Осенний' }))
 
+    const диалог = await screen.findByRole('alertdialog', { name: 'Подтверждение удаления' })
+    expect(диалог).toHaveAttribute('aria-modal', 'true')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Отмена' })).toHaveFocus())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Удалить Осенний' })).toHaveFocus(),
+    )
+    expect(await screen.findByText('Осенний')).toBeInTheDocument()
+    expect(await outfits.get('образ-1')).toBeDefined()
+  })
+
+  it('Escape закрывает подтверждение удаления и не трогает образ', async () => {
+    await outfits.create(makeOutfit({ id: 'образ-1', название: 'Осенний' }))
+
+    renderOutfits()
+    await screen.findByRole('list')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить Осенний' }))
+    const диалог = await screen.findByRole('alertdialog', { name: 'Подтверждение удаления' })
+    fireEvent.keyDown(диалог, { key: 'Escape' })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('alertdialog', { name: 'Подтверждение удаления' })).toBeNull(),
+    )
     expect(await screen.findByText('Осенний')).toBeInTheDocument()
     expect(await outfits.get('образ-1')).toBeDefined()
   })

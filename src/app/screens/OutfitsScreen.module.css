@@ -6,19 +6,26 @@
 }
 
 .create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap-min);
   padding: 12px 18px;
   border: none;
   border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  color: #ffffff;
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity var(--motion-fast) var(--motion-ease);
+  transition:
+    opacity var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
 }
 
 .create:active {
   opacity: 0.85;
+  transform: scale(0.98);
 }
 
 .status {
@@ -33,6 +40,10 @@
 }
 
 .chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap-min);
   padding: 10px 18px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
@@ -46,10 +57,18 @@
     color var(--motion-fast) var(--motion-ease);
 }
 
+.chip:active {
+  background: var(--color-surface);
+}
+
 .chipActive {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: #ffffff;
+  border-color: var(--color-accent-strong);
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
+}
+
+.chipActive:active {
+  background: var(--color-accent-strong);
 }
 
 .empty {
@@ -72,8 +91,8 @@
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 20px 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 12px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -141,19 +160,90 @@
 }
 
 .action {
-  flex: 1 1 auto;
-  padding: 8px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap-min);
+  height: var(--tap-min);
+  padding: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-chip);
   background: var(--color-bg);
   color: var(--color-text);
-  font-size: 13px;
   cursor: pointer;
-  transition: border-color var(--motion-fast) var(--motion-ease);
+  transition:
+    background var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease),
+    color var(--motion-fast) var(--motion-ease);
 }
 
 .action:active {
   border-color: var(--color-accent);
+  background: var(--color-surface);
+}
+
+.actionDanger {
+  color: var(--color-danger);
+}
+
+.actionDanger:active {
+  border-color: var(--color-danger);
+}
+
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+.confirmText {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.confirmActions {
+  display: flex;
+  gap: 8px;
+}
+
+.confirmDelete,
+.confirmCancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-height: var(--tap-min);
+  padding: 10px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--motion-ease),
+    opacity var(--motion-fast) var(--motion-ease);
+}
+
+.confirmDelete {
+  border: none;
+  background: var(--color-danger);
+  color: var(--color-on-accent);
+}
+
+.confirmDelete:active {
+  opacity: 0.85;
+}
+
+.confirmCancel {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.confirmCancel:active {
+  background: var(--color-surface);
 }
 
 .rename {
@@ -164,6 +254,7 @@
 
 .renameInput {
   width: 100%;
+  min-height: var(--tap-min);
   padding: 12px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-chip);
@@ -176,6 +267,11 @@
   border-color: var(--color-accent);
 }
 
+.renameInput:focus-visible {
+  outline: var(--focus-ring) solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 .renameButtons {
   display: flex;
   gap: 8px;
@@ -183,11 +279,12 @@
 
 .renameSave {
   flex: 1 1 auto;
+  min-height: var(--tap-min);
   padding: 10px 14px;
   border: none;
   border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  color: #ffffff;
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
   font-weight: 600;
   cursor: pointer;
   transition: opacity var(--motion-fast) var(--motion-ease);
@@ -199,10 +296,32 @@
 
 .renameCancel {
   flex: 1 1 auto;
+  min-height: var(--tap-min);
   padding: 10px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-bg);
   color: var(--color-text);
   cursor: pointer;
+}
+
+.renameCancel:active {
+  background: var(--color-surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .create,
+  .chip,
+  .action,
+  .confirmDelete,
+  .confirmCancel,
+  .renameInput,
+  .renameSave,
+  .renameCancel {
+    transition: none;
+  }
+
+  .create:active {
+    transform: none;
+  }
 }

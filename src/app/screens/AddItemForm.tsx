@@ -85,6 +85,16 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
 
   const busy = фаза === 'loading' || фаза === 'saving' || фаза === 'generating'
 
+  /** Подпись прогресса рядом с неактивной кнопкой загрузки: что происходит сейчас. */
+  const прогресс =
+    фаза === 'loading'
+      ? 'Загружаем и распознаём фото…'
+      : фаза === 'saving'
+        ? 'Сохраняем вещь…'
+        : фаза === 'generating'
+          ? 'Готовим AI-версию…'
+          : null
+
   function повторить() {
     retryRef.current?.()
   }
@@ -178,22 +188,32 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
 
       {!online && <OfflineNotice />}
 
-      {фаза !== 'confirm' && фаза !== 'generating' && (
-        <label className={styles.fileButton}>
-          Загрузить фото
-          <input
-            className={styles.fileInput}
-            type="file"
-            accept="image/*"
-            disabled={busy}
-            onChange={(event) => {
-              const file = event.target.files?.[0]
-              // Сброс значения: повторный выбор того же файла снова поднимет change.
-              event.target.value = ''
-              if (file !== undefined) void загрузитьПоФото(file)
-            }}
-          />
-        </label>
+      {фаза !== 'confirm' && (
+        <div className={styles.upload}>
+          <label
+            className={busy ? `${styles.fileButton} ${styles.fileButtonBusy}` : styles.fileButton}
+            aria-disabled={busy}
+          >
+            Загрузить фото
+            <input
+              className={styles.fileInput}
+              type="file"
+              accept="image/*"
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                // Сброс значения: повторный выбор того же файла снова поднимет change.
+                event.target.value = ''
+                if (file !== undefined) void загрузитьПоФото(file)
+              }}
+            />
+          </label>
+          {прогресс !== null && (
+            <p className={styles.uploadProgress} role="status" aria-live="polite">
+              {прогресс}
+            </p>
+          )}
+        </div>
       )}
 
       {ошибка !== null && (
@@ -244,7 +264,7 @@ export function AddItemForm({ onSaved }: AddItemFormProps) {
           )}
           {фаза === 'generating' && задача === null && (
             <p className={styles.confirmHint} role="status" aria-live="polite">
-              Готовим AI-версию…
+              Обычно это занимает меньше минуты.
             </p>
           )}
 

@@ -18,6 +18,11 @@ describe('Веб-манифест', () => {
     expect(manifest.theme_color).toBe('#FFFFFF')
   })
 
+  it('описывает добавление по фото и не обещает импорт по ссылке', () => {
+    expect(manifest.description).toContain('фото')
+    expect(manifest.description).not.toContain('по ссылке')
+  })
+
   it('объявляет обычные, apple-touch и maskable иконки', () => {
     const icons = manifest.icons ?? []
     const sizes = icons.map((icon) => icon.sizes)

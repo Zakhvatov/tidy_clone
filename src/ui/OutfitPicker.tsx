@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import type { Вещь } from '../domain/types'
@@ -30,6 +30,9 @@ export function OutfitPicker({ entries, выбранные, onAdd }: OutfitPicke
   const секции = useMemo(() => groupByTopCategory(entries), [entries])
   const [активныйВерх, setАктивныйВерх] = useState<string | null>(null)
   const [активнаяПод, setАктивнаяПод] = useState<string>(ВСЕ)
+  const базовыйId = useId()
+  const табыRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const idПанели = `${базовыйId}-панель`
 
   if (секции.length === 0) {
     return (
@@ -58,18 +61,47 @@ export function OutfitPicker({ entries, выбранные, onAdd }: OutfitPicke
       <h2 className={styles.title}>Вещи</h2>
 
       <div className={styles.tabs} role="tablist" aria-label="Категории">
-        {секции.map((секция) => {
+        {секции.map((секция, индекс) => {
           const активна = секция.категория === текущая.категория
+          const idТаба = `${базовыйId}-таб-${индекс}`
           return (
             <button
               key={секция.категория}
+              ref={(узел) => {
+                табыRefs.current[индекс] = узел
+              }}
+              id={idТаба}
               type="button"
               role="tab"
               aria-selected={активна}
+              aria-controls={idПанели}
+              tabIndex={активна ? 0 : -1}
               className={активна ? `${styles.tab} ${styles.tabActive}` : styles.tab}
               onClick={() => {
                 setАктивныйВерх(секция.категория)
                 setАктивнаяПод(ВСЕ)
+              }}
+              onKeyDown={(event) => {
+                const текущийИндекс = секции.findIndex(
+                  (кандидат) => кандидат.категория === текущая.категория,
+                )
+                let следующий: number | null = null
+                if (event.key === 'ArrowRight') {
+                  следующий = (текущийИндекс + 1) % секции.length
+                } else if (event.key === 'ArrowLeft') {
+                  следующий = (текущийИндекс - 1 + секции.length) % секции.length
+                } else if (event.key === 'Home') {
+                  следующий = 0
+                } else if (event.key === 'End') {
+                  следующий = секции.length - 1
+                }
+                if (следующий === null) return
+                event.preventDefault()
+                const следующая = секции[следующий]
+                if (следующая === undefined) return
+                setАктивныйВерх(следующая.категория)
+                setАктивнаяПод(ВСЕ)
+                табыRefs.current[следующий]?.focus()
               }}
             >
               {секция.категория}
@@ -79,45 +111,52 @@ export function OutfitPicker({ entries, выбранные, onAdd }: OutfitPicke
         })}
       </div>
 
-      <div className={styles.chips} role="group" aria-label="Подкатегории">
-        {подкатегории.map((значение) => (
-          <button
-            key={значение}
-            type="button"
-            aria-pressed={значение === под}
-            className={значение === под ? `${styles.chip} ${styles.chipActive}` : styles.chip}
-            onClick={() => setАктивнаяПод(значение)}
-          >
-            {значение}
-          </button>
-        ))}
-      </div>
+      <div
+        className={styles.panel}
+        id={idПанели}
+        role="tabpanel"
+        aria-labelledby={`${базовыйId}-таб-${секции.findIndex((секция) => секция.категория === текущая.категория)}`}
+      >
+        <div className={styles.chips} role="group" aria-label="Подкатегории">
+          {подкатегории.map((значение) => (
+            <button
+              key={значение}
+              type="button"
+              aria-pressed={значение === под}
+              className={значение === под ? `${styles.chip} ${styles.chipActive}` : styles.chip}
+              onClick={() => setАктивнаяПод(значение)}
+            >
+              {значение}
+            </button>
+          ))}
+        </div>
 
-      <ul className={styles.strip}>
-        {лента.map((entry) => {
-          const название =
-            entry.вещь.название.trim() === '' ? 'Без названия' : entry.вещь.название
-          const изображение = preferredImage(entry.вещь, entry.изображения)
-          const добавлена = выбранные.includes(entry.вещь.id)
-          return (
-            <li key={entry.вещь.id} className={styles.stripItem}>
-              <button
-                type="button"
-                className={добавлена ? `${styles.item} ${styles.itemChosen}` : styles.item}
-                aria-label={`Добавить ${название}`}
-                aria-pressed={добавлена}
-                onClick={() => onAdd(entry.вещь)}
-              >
-                <div className={styles.itemImage}>
-                  <ItemImage blob={изображение?.blob} alt={название} />
-                </div>
-                <span className={styles.itemName}>{название}</span>
-                {добавлена && <span className={styles.itemBadge}>В образе</span>}
-              </button>
-            </li>
-          )
-        })}
-      </ul>
+        <ul className={styles.strip}>
+          {лента.map((entry) => {
+            const название =
+              entry.вещь.название.trim() === '' ? 'Без названия' : entry.вещь.название
+            const изображение = preferredImage(entry.вещь, entry.изображения)
+            const добавлена = выбранные.includes(entry.вещь.id)
+            return (
+              <li key={entry.вещь.id} className={styles.stripItem}>
+                <button
+                  type="button"
+                  className={добавлена ? `${styles.item} ${styles.itemChosen}` : styles.item}
+                  aria-label={`Добавить ${название}`}
+                  aria-pressed={добавлена}
+                  onClick={() => onAdd(entry.вещь)}
+                >
+                  <div className={styles.itemImage}>
+                    <ItemImage blob={изображение?.blob} alt={название} />
+                  </div>
+                  <span className={styles.itemName}>{название}</span>
+                  {добавлена && <span className={styles.itemBadge}>В образе</span>}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
     </section>
   )
 }

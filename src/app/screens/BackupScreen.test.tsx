@@ -121,7 +121,7 @@ describe('Экран резервной копии (T19)', () => {
   it('доступен из навигации и по адресу /backup', () => {
     renderBackup()
     expect(screen.getByRole('heading', { name: 'Резервная копия' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Копия' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Данные' })).toBeInTheDocument()
   })
 
   it('экспортирует гардероб одним файлом и сообщает итог', async () => {

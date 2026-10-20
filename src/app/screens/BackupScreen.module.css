@@ -1,5 +1,5 @@
 .lead {
-  margin: -12px 0 0;
+  margin: 0;
   color: var(--color-text-secondary);
   font-size: 15px;
   line-height: 1.45;
@@ -8,7 +8,7 @@
 .card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   padding: var(--space-edge);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
@@ -30,11 +30,13 @@
 }
 
 .primary {
+  min-height: 48px;
   padding: 14px 16px;
   border: none;
   border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  color: #ffffff;
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
   transition: opacity var(--motion-fast) var(--motion-ease);
@@ -50,11 +52,13 @@
 }
 
 .secondary {
+  min-height: var(--tap-min);
   padding: 14px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-bg);
   color: var(--color-text);
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--motion-ease);
@@ -70,29 +74,50 @@
 }
 
 .fileButton {
-  display: block;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap-comfortable);
   padding: 14px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
   background: var(--color-bg);
   color: var(--color-text);
+  font-size: 16px;
   font-weight: 600;
   text-align: center;
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--motion-ease);
 }
 
-.fileButton:active {
+.fileButton:not(.fileButtonDisabled):active {
   background: var(--color-surface);
+}
+
+/* Кольцо на видимой кнопке: сам input скрыт, но остаётся в порядке табуляции. */
+.fileButton:focus-within {
+  outline: var(--focus-ring) solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .fileButtonDisabled {
   cursor: default;
   opacity: 0.6;
+  pointer-events: none;
 }
 
 .fileInput {
-  display: none;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
 }
 
 .progress {

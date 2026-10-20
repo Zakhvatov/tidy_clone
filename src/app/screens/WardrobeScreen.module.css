@@ -1,16 +1,28 @@
-.controls {
+.stickyBar {
+  position: sticky;
+  top: var(--safe-top);
+  z-index: var(--z-nav);
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  align-items: center;
+  gap: 8px;
+  margin-right: calc(-1 * (var(--space-edge) + var(--safe-right)));
+  margin-left: calc(-1 * (var(--space-edge) + var(--safe-left)));
+  padding: 10px calc(var(--space-edge) + var(--safe-right)) 10px
+    calc(var(--space-edge) + var(--safe-left));
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 
 .search {
-  width: 100%;
-  padding: 13px 16px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: var(--tap-min);
+  padding: 10px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
-  background: var(--color-surface);
-  outline: none;
+  background: var(--color-bg);
   transition: border-color var(--motion-fast) var(--motion-ease);
 }
 
@@ -18,56 +30,111 @@
   border-color: var(--color-accent);
 }
 
-.chipGroup {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.chip {
-  padding: 8px 14px;
+.filtersButton {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap-min);
+  padding: 0 16px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-chip);
+  border-radius: var(--radius-pill);
   background: var(--color-bg);
   color: var(--color-text);
   font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
   transition:
-    background var(--motion-fast) var(--motion-ease),
+    background-color var(--motion-fast) var(--motion-ease),
     border-color var(--motion-fast) var(--motion-ease),
     color var(--motion-fast) var(--motion-ease);
 }
 
-.chipActive {
+.filtersButtonActive {
   border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: #ffffff;
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg));
+  color: var(--color-accent-strong);
 }
 
-.controlsFooter {
+.activeArea {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.pills {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 2px;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.pills::-webkit-scrollbar {
+  display: none;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tap-min);
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease);
+}
+
+.pill:active {
+  background: var(--color-border);
+}
+
+.pillLabel {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pillRemove {
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.statusRow {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .found {
   color: var(--color-text-secondary);
-  font-size: 15px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
 .reset {
-  padding: 10px 16px;
-  border: 1px solid var(--color-border);
+  min-height: var(--tap-min);
+  padding: 0 14px;
+  border: none;
   border-radius: var(--radius-pill);
-  background: var(--color-bg);
-  color: var(--color-accent);
+  background: transparent;
+  color: var(--color-accent-strong);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: background var(--motion-fast) var(--motion-ease);
+  transition: background-color var(--motion-fast) var(--motion-ease);
 }
 
 .reset:active {
@@ -86,7 +153,6 @@
   border-radius: var(--radius-card);
   background: var(--color-surface);
   text-align: center;
-  animation: nothing-in var(--motion-base) var(--motion-ease);
 }
 
 .nothingTitle {
@@ -107,105 +173,102 @@
   padding: 12px 22px;
 }
 
-@keyframes nothing-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .nothing {
-    animation: none;
-  }
-}
-
 .section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  min-width: 0;
 }
 
 .sectionHeader {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 8px;
+  margin-bottom: 1px;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .sectionTitle {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .count {
+  margin-left: auto;
   color: var(--color-text-secondary);
-  font-size: 15px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+.loading {
+  color: var(--color-text-secondary);
+  font-size: 14px;
 }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-@media (min-width: 640px) {
-  .grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 960px) {
-  .grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
+.tile {
+  min-width: 0;
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
 }
 
 .card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   width: 100%;
   padding: 0;
   border: none;
   background: transparent;
+  color: var(--color-text);
   text-align: left;
   cursor: pointer;
   transition: opacity var(--motion-fast) var(--motion-ease);
 }
 
 .card:active {
-  opacity: 0.85;
+  opacity: 0.8;
+}
+
+.thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .cardName {
-  margin-top: 4px;
-  color: var(--color-text);
-  font-size: 15px;
-  line-height: 1.3;
-  /* Название не разъезжается на много строк и не ломает высоту секции. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  display: block;
+  max-width: 100%;
+  padding: 6px 6px 8px;
   overflow: hidden;
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.cardSub {
-  color: var(--color-text-secondary);
-  font-size: 13px;
-}
-
-/* Пустой гардероб = форма добавления (O7): тот же белый фон и тот же ритм
-   отступов, что на экране /add, — без лишней карточки-обёртки вокруг формы. */
 .onboarding {
   display: flex;
   flex-direction: column;
@@ -220,22 +283,22 @@
 
 .skeletonHeader {
   width: 120px;
-  height: 22px;
+  height: 14px;
   border-radius: var(--radius-chip);
   background: var(--color-surface);
 }
 
 .skeletonGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
 }
 
 .skeletonCard {
-  aspect-ratio: 3 / 4;
-  border-radius: var(--radius-card);
+  aspect-ratio: 1;
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
   background: var(--color-surface);
-  /* ADR-0005: однократное появление 200 ms ease-out вместо бесконечной пульсации. */
   animation: skeleton-in var(--motion-base) var(--motion-ease);
 }
 
@@ -249,6 +312,14 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .card,
+  .pill,
+  .reset,
+  .search,
+  .filtersButton {
+    transition: none;
+  }
+
   .skeletonCard {
     animation: none;
   }

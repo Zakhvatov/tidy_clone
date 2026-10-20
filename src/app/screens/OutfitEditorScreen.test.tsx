@@ -269,6 +269,92 @@ describe('Редактор коллажа (T16) и пикер вещей (T17)',
     expect(await screen.findByRole('heading', { name: 'Образ не найден' })).toBeInTheDocument()
   })
 
+  it('«Назад» без правок ведёт в список образов, а не в гардероб', async () => {
+    renderEditor('new')
+
+    expect(await screen.findByRole('heading', { name: 'Новый образ' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Назад' }))
+
+    expect(await screen.findByRole('heading', { name: 'Образы' })).toBeInTheDocument()
+  })
+
+  it('несохранённые правки перехватывают «Назад»; Escape оставляет в редакторе', async () => {
+    renderEditor('new')
+    const поле = await screen.findByRole('textbox', { name: 'Название образа' })
+    fireEvent.change(поле, { target: { value: 'Вечерний' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Назад' }))
+
+    const диалог = await screen.findByRole('alertdialog', { name: 'Несохранённые изменения' })
+    expect(диалог).toHaveAttribute('aria-modal', 'true')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Остаться' })).toHaveFocus())
+
+    fireEvent.keyDown(диалог, { key: 'Escape' })
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('alertdialog', { name: 'Несохранённые изменения' }),
+      ).toBeNull(),
+    )
+    expect(screen.getByRole('heading', { name: 'Новый образ' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Назад' })).toHaveFocus())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Назад' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Выйти без сохранения' }))
+
+    expect(await screen.findByRole('heading', { name: 'Образы' })).toBeInTheDocument()
+  })
+
+  it('несохранённые правки включают beforeunload, а после сохранения — нет', async () => {
+    renderEditor('new')
+    const поле = await screen.findByRole('textbox', { name: 'Название образа' })
+
+    const событиеДо = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(событиеДо)
+    expect(событиеДо.defaultPrevented).toBe(false)
+
+    fireEvent.change(поле, { target: { value: 'Вечерний' } })
+    const событиеПосле = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(событиеПосле)
+    expect(событиеПосле.defaultPrevented).toBe(true)
+  })
+
+  it('«Сохранено» сменяется нейтральным индикатором после любой правки', async () => {
+    await outfits.create({
+      id: 'образ-1',
+      название: 'Осенний',
+      сезон: 'демисезон',
+      элементы: [],
+      датаСоздания: '2024-04-01T00:00:00.000Z',
+    })
+
+    renderEditor('образ-1')
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Сохранить образ' }))
+    expect(await screen.findByText('Сохранено')).toBeInTheDocument()
+
+    const поле = screen.getByRole('textbox', { name: 'Название образа' })
+    fireEvent.change(поле, { target: { value: 'Зимний' } })
+
+    expect(screen.queryByText('Сохранено')).toBeNull()
+    expect(screen.getByText('Есть несохранённые изменения')).toBeInTheDocument()
+  })
+
+  it('пикер связывает табы с панелью через aria-controls и aria-labelledby', async () => {
+    await items.create(makeItem({ id: 'в-1', название: 'Худи' }))
+
+    renderEditor('new')
+
+    const табы = await screen.findAllByRole('tab')
+    const активный = табы.find((таб) => таб.getAttribute('aria-selected') === 'true')
+    expect(активный).toBeDefined()
+    expect(активный?.getAttribute('aria-controls')).toBeTruthy()
+
+    const панель = await screen.findByRole('tabpanel')
+    expect(панель.getAttribute('id')).toBe(активный?.getAttribute('aria-controls'))
+    expect(панель.getAttribute('aria-labelledby')).toBe(активный?.getAttribute('id'))
+  })
+
   it('существующий образ открывается с названием, сезоном и элементами', async () => {
     await items.create(makeItem({ id: 'в-1', название: 'Худи' }))
     await images.addOriginal(

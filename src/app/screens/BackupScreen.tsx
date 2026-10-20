@@ -149,7 +149,10 @@ export function BackupScreen() {
           Восстановить гардероб из файла. Существующие вещи не удаляются: новые добавятся,
           изменившиеся обновятся.
         </p>
-        <label className={`${styles.fileButton} ${busy ? styles.fileButtonDisabled : ''}`}>
+        <label
+          className={`${styles.fileButton} ${busy ? styles.fileButtonDisabled : ''}`}
+          aria-disabled={busy}
+        >
           Выбрать файл резервной копии
           <input
             ref={fileRef}

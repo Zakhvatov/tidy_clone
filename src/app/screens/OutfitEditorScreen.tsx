@@ -5,6 +5,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import { ArrowLeft } from '@phosphor-icons/react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import type { Season, ЭлементОбраза, Образ, Вещь } from '../../domain/types'
@@ -60,6 +61,26 @@ function нормализовать(элементы: readonly ЭлементО�
     .map((элемент, индекс) => ({ ...элемент, zПорядок: индекс }))
 }
 
+/**
+ * Снимок редактируемого состояния для проверки несохранённых правок.
+ * Округляем координаты и масштаб, чтобы шум вычислений не считался правкой.
+ */
+function снимокОбраза(
+  название: string,
+  сезон: Season,
+  элементы: readonly ЭлементОбраза[],
+  фон: string,
+): string {
+  const раскладка = нормализовать(элементы).map((элемент) => [
+    элемент.idВещи,
+    Number(элемент.позиция.x.toFixed(3)),
+    Number(элемент.позиция.y.toFixed(3)),
+    Number(элемент.масштаб.toFixed(4)),
+    элемент.zПорядок,
+  ])
+  return JSON.stringify({ название, сезон, фон, раскладка })
+}
+
 /** Изображение вещи на холсте: object URL создаётся и освобождается хуком. */
 function ElementImage({ blob, alt }: { blob?: Blob; alt: string }) {
   const url = useObjectUrl(blob)
@@ -93,15 +114,21 @@ export function OutfitEditorScreen() {
   const [ошибка, setОшибка] = useState<string | null>(null)
   const [попытка, setПопытка] = useState(0)
   const [перетаскивается, setПеретаскивается] = useState(false)
+  const [исходныйСнимок, setИсходныйСнимок] = useState<string | null>(null)
+  const [подтверждениеВыхода, setПодтверждениеВыхода] = useState(false)
+  const [вернутьФокус, setВернутьФокус] = useState(false)
 
   const холстRef = useRef<HTMLDivElement>(null)
   const перетаскивание = useRef<{ idВещи: string; x: number; y: number } | null>(null)
+  const кнопкаНазад = useRef<HTMLButtonElement>(null)
+  const кнопкаОстаться = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     let активен = true
     setСостояние('загрузка')
     setОшибка(null)
     setСообщение(null)
+    setПодтверждениеВыхода(false)
 
     void (async () => {
       try {
@@ -110,11 +137,13 @@ export function OutfitEditorScreen() {
         setЗаписи(гардероб)
 
         if (новый) {
-          setНазвание(автоИмя(new Date()))
+          const имя = автоИмя(new Date())
+          setНазвание(имя)
           setСезон('демисезон')
           setЭлементы([])
           setФон(ФОН_ПО_УМОЛЧАНИЮ)
           setВыбран(null)
+          setИсходныйСнимок(снимокОбраза(имя, 'демисезон', [], ФОН_ПО_УМОЛЧАНИЮ))
           setСостояние('готово')
           return
         }
@@ -122,17 +151,23 @@ export function OutfitEditorScreen() {
         const образ = await получитьОбраз(id)
         if (!активен) return
         if (образ === undefined) {
+          setИсходныйСнимок(null)
           setСостояние('нет')
           return
         }
+        const сохранённыйФон = загрузитьФон(образ.id)
         setНазвание(образ.название)
         setСезон(образ.сезон)
         setЭлементы(образ.элементы)
-        setФон(загрузитьФон(образ.id))
+        setФон(сохранённыйФон)
         setВыбран(null)
+        setИсходныйСнимок(
+          снимокОбраза(образ.название, образ.сезон, образ.элементы, сохранённыйФон),
+        )
         setСостояние('готово')
       } catch {
         if (!активен) return
+        setИсходныйСнимок(null)
         setОшибка(ОШИБКА_ЧТЕНИЯ)
         setСостояние('ошибка')
       }
@@ -152,6 +187,47 @@ export function OutfitEditorScreen() {
     [записи],
   )
   const выбранныйЭлемент = элементы.find((элемент) => элемент.idВещи === выбран) ?? null
+  const грязно =
+    исходныйСнимок !== null &&
+    снимокОбраза(название, сезон, элементы, фон) !== исходныйСнимок
+
+  useEffect(() => {
+    if (грязно && сообщение !== null) setСообщение(null)
+  }, [грязно, сообщение])
+
+  useEffect(() => {
+    if (!грязно) return
+    const предохранить = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', предохранить)
+    return () => window.removeEventListener('beforeunload', предохранить)
+  }, [грязно])
+
+  useEffect(() => {
+    if (подтверждениеВыхода) кнопкаОстаться.current?.focus()
+  }, [подтверждениеВыхода])
+
+  useEffect(() => {
+    if (!подтверждениеВыхода && вернутьФокус) {
+      кнопкаНазад.current?.focus()
+      setВернутьФокус(false)
+    }
+  }, [вернутьФокус, подтверждениеВыхода])
+
+  function назад(): void {
+    if (грязно) {
+      setПодтверждениеВыхода(true)
+      return
+    }
+    navigate('/outfits')
+  }
+
+  function отменитьВыход(): void {
+    setПодтверждениеВыхода(false)
+    setВернутьФокус(true)
+  }
 
   /** Коэффициент перевода пикселей экрана в координаты холста. */
   function масштабЭкрана(): number {
@@ -276,6 +352,7 @@ export function OutfitEditorScreen() {
         await создатьОбраз(создаваемый)
         сохранитьФон(создаваемый.id, фон)
         setНазвание(имя)
+        setИсходныйСнимок(снимокОбраза(имя, сезон, порядок, фон))
         setСообщение('Сохранено')
         navigate(`/outfit/${создаваемый.id}`, { replace: true })
         return
@@ -284,6 +361,7 @@ export function OutfitEditorScreen() {
       await обновитьОбраз(id, { название: имя, сезон, элементы: порядок })
       сохранитьФон(id, фон)
       setНазвание(имя)
+      setИсходныйСнимок(снимокОбраза(имя, сезон, порядок, фон))
       setСообщение('Сохранено')
     } catch {
       setОшибка(ОШИБКА_СОХРАНЕНИЯ)
@@ -318,8 +396,8 @@ export function OutfitEditorScreen() {
       <section className={screenStyles.screen}>
         <div className={styles.notFound}>
           <h1 className={screenStyles.title}>Образ не найден</h1>
-          <p className={styles.notFoundText}>Возможно, его удалили. Вернитесь в гардероб.</p>
-          <button className={styles.back} type="button" onClick={() => navigate('/')}>
+          <p className={styles.notFoundText}>Возможно, его удалили. Вернитесь к образам.</p>
+          <button className={styles.back} type="button" onClick={() => navigate('/outfits')}>
             Назад
           </button>
         </div>
@@ -330,11 +408,48 @@ export function OutfitEditorScreen() {
   return (
     <section className={screenStyles.screen}>
       <header className={styles.header}>
-        <button className={styles.back} type="button" onClick={() => navigate('/')}>
-          ← Назад
+        <button ref={кнопкаНазад} className={styles.back} type="button" onClick={назад}>
+          <ArrowLeft size={20} weight="regular" aria-hidden="true" />
+          Назад
         </button>
         <h1 className={screenStyles.title}>{новый ? 'Новый образ' : 'Образ'}</h1>
       </header>
+
+      {подтверждениеВыхода && (
+        <div
+          className={styles.confirm}
+          role="alertdialog"
+          aria-modal="true"
+          aria-label="Несохранённые изменения"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.stopPropagation()
+              отменитьВыход()
+            }
+          }}
+        >
+          <p className={styles.confirmText}>
+            Есть несохранённые изменения. Выйти из редактора без сохранения?
+          </p>
+          <div className={styles.confirmActions}>
+            <button
+              ref={кнопкаОстаться}
+              className={styles.confirmCancel}
+              type="button"
+              onClick={отменитьВыход}
+            >
+              Остаться
+            </button>
+            <button
+              className={styles.confirmLeave}
+              type="button"
+              onClick={() => navigate('/outfits')}
+            >
+              Выйти без сохранения
+            </button>
+          </div>
+        </div>
+      )}
 
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Название</span>
@@ -466,29 +581,35 @@ export function OutfitEditorScreen() {
         ))}
       </div>
 
-      {ошибка !== null && <ErrorNotice message={ошибка} />}
-      {сообщение !== null && (
-        <p className={styles.saved} role="status">
-          {сообщение}
-        </p>
-      )}
-
-      <button
-        className={styles.save}
-        type="button"
-        disabled={сохранение}
-        onClick={() => {
-          void сохранить()
-        }}
-      >
-        {сохранение ? 'Сохраняем…' : 'Сохранить образ'}
-      </button>
-
       <OutfitPicker
         entries={записи}
         выбранные={элементы.map((элемент) => элемент.idВещи)}
         onAdd={добавитьВещь}
       />
+
+      {ошибка !== null && <ErrorNotice message={ошибка} />}
+      {сообщение !== null && !грязно && (
+        <p className={styles.saved} role="status">
+          {сообщение}
+        </p>
+      )}
+      {грязно && <p className={styles.dirty}>Есть несохранённые изменения</p>}
+
+      <div className={styles.saveBar}>
+        <button className={styles.cancel} type="button" onClick={назад}>
+          Отмена
+        </button>
+        <button
+          className={styles.save}
+          type="button"
+          disabled={сохранение}
+          onClick={() => {
+            void сохранить()
+          }}
+        >
+          {сохранение ? 'Сохраняем…' : 'Сохранить образ'}
+        </button>
+      </div>
     </section>
   )
 }

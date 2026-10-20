@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { PencilSimple, Trash } from '@phosphor-icons/react'
 import { useNavigate } from 'react-router-dom'
 
 import type { Изображение, Образ, Season, Вещь } from '../../domain/types'
@@ -166,6 +167,10 @@ export function OutfitsScreen() {
   const [ошибка, setОшибка] = useState<string | null>(null)
   const [попытка, setПопытка] = useState(0)
   const [редактируется, setРедактируется] = useState<string | null>(null)
+  const [подтверждениеУдаления, setПодтверждениеУдаления] = useState<string | null>(null)
+  const [вернутьФокус, setВернутьФокус] = useState(false)
+  const кнопкаУдаления = useRef<HTMLButtonElement | null>(null)
+  const кнопкаОтмены = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     let активен = true
@@ -220,12 +225,24 @@ export function OutfitsScreen() {
     }
   }
 
+  useEffect(() => {
+    if (подтверждениеУдаления !== null) кнопкаОтмены.current?.focus()
+  }, [подтверждениеУдаления])
+
+  useEffect(() => {
+    if (подтверждениеУдаления === null && вернутьФокус) {
+      кнопкаУдаления.current?.focus()
+      setВернутьФокус(false)
+    }
+  }, [вернутьФокус, подтверждениеУдаления])
+
+  function отменитьУдаление(): void {
+    setПодтверждениеУдаления(null)
+    setВернутьФокус(true)
+  }
+
   /** Удаляет образ; сама Вещь в гардеробе остаётся. */
   async function удалить(образ: Образ): Promise<void> {
-    const подтверждено = window.confirm(
-      `Удалить образ «${образ.название}»? Вещи останутся в гардеробе.`,
-    )
-    if (!подтверждено) return
     setОшибка(null)
     try {
       await удалитьОбраз(образ.id)
@@ -233,8 +250,11 @@ export function OutfitsScreen() {
       // удалить вручную — иначе он останется навсегда (утечка из ревью).
       удалитьФон(образ.id)
       setОбразы((текущие) => текущие.filter((текущий) => текущий.id !== образ.id))
+      setПодтверждениеУдаления(null)
     } catch {
       setОшибка(ОШИБКА_УДАЛЕНИЯ)
+      setПодтверждениеУдаления(null)
+      setВернутьФокус(true)
     }
   }
 
@@ -346,21 +366,64 @@ export function OutfitsScreen() {
                         className={styles.action}
                         type="button"
                         aria-label={`Переименовать ${название}`}
-                        onClick={() => setРедактируется(образ.id)}
-                      >
-                        Переименовать
-                      </button>
-                      <button
-                        className={styles.action}
-                        type="button"
-                        aria-label={`Удалить ${название}`}
                         onClick={() => {
-                          void удалить(образ)
+                          setПодтверждениеУдаления(null)
+                          setРедактируется(образ.id)
                         }}
                       >
-                        Удалить
+                        <PencilSimple size={20} weight="regular" aria-hidden="true" />
+                      </button>
+                      <button
+                        className={`${styles.action} ${styles.actionDanger}`}
+                        type="button"
+                        aria-label={`Удалить ${название}`}
+                        aria-expanded={подтверждениеУдаления === образ.id}
+                        onClick={(event) => {
+                          кнопкаУдаления.current = event.currentTarget
+                          setВернутьФокус(false)
+                          setПодтверждениеУдаления(образ.id)
+                        }}
+                      >
+                        <Trash size={20} weight="regular" aria-hidden="true" />
                       </button>
                     </div>
+                    {подтверждениеУдаления === образ.id && (
+                      <div
+                        className={styles.confirm}
+                        role="alertdialog"
+                        aria-modal="true"
+                        aria-label="Подтверждение удаления"
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape') {
+                            event.stopPropagation()
+                            отменитьУдаление()
+                          }
+                        }}
+                      >
+                        <p className={styles.confirmText}>
+                          Удалить образ «{название}»? Вещи останутся в гардеробе.
+                        </p>
+                        <div className={styles.confirmActions}>
+                          <button
+                            ref={кнопкаОтмены}
+                            className={styles.confirmCancel}
+                            type="button"
+                            onClick={отменитьУдаление}
+                          >
+                            Отмена
+                          </button>
+                          <button
+                            className={styles.confirmDelete}
+                            type="button"
+                            onClick={() => {
+                              void удалить(образ)
+                            }}
+                          >
+                            Удалить
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </li>

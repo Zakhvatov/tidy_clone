@@ -1,50 +1,65 @@
 .shell {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  min-height: 100dvh;
   background: var(--color-bg);
 }
 
 .content {
   flex: 1;
-  padding: calc(var(--safe-top) + var(--space-edge)) var(--space-edge) var(--space-section);
+  padding: calc(var(--safe-top) + var(--space-edge)) calc(var(--safe-right) + var(--space-edge))
+    calc(var(--nav-offset) + var(--space-section))
+    calc(var(--safe-left) + var(--space-edge));
 }
 
 .tabs {
-  position: sticky;
+  position: fixed;
+  right: 0;
   bottom: 0;
+  left: 0;
+  z-index: var(--z-nav);
   display: flex;
   gap: 4px;
-  padding: 10px var(--space-edge) calc(var(--safe-bottom) + 10px);
+  padding: 10px calc(var(--safe-right) + var(--space-edge)) calc(var(--safe-bottom) + 10px)
+    calc(var(--safe-left) + var(--space-edge));
   background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--color-border);
 }
 
 .tab {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
   min-width: 0;
-  padding: 12px 4px;
+  min-height: var(--tap-comfortable);
+  padding: 6px 2px;
   border-radius: var(--radius-pill);
   text-align: center;
   text-decoration: none;
   color: var(--color-text-secondary);
-  /* Пять пунктов в панели: 13px помещается и на iPhone SE (375px). */
-  font-size: 13px;
-  white-space: nowrap;
   transition: color var(--motion-fast) var(--motion-ease),
     background-color var(--motion-fast) var(--motion-ease);
 }
 
-/* Очень узкие экраны (320px): ещё меньше, чтобы подписи не обрезались. */
-@media (max-width: 359px) {
-  .tab {
-    font-size: 11px;
-    padding: 10px 2px;
-  }
+.tabIcon {
+  flex-shrink: 0;
+}
+
+.tabLabel {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .tabActive {
-  color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  color: var(--color-accent-strong);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
 }

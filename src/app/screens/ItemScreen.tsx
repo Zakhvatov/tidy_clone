@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 import type { ImageRole, Изображение, ItemSource, Season, Вещь } from '../../domain/types'
@@ -133,6 +133,11 @@ export function ItemScreen() {
   const [подтверждениеУдаления, setПодтверждениеУдаления] = useState(false)
   const [попытка, setПопытка] = useState(0)
 
+  // Возврат фокуса после отмены: «Удалить» живёт в липкой панели действий,
+  // поэтому ссылка на неё переживает и открытие, и закрытие подтверждения.
+  const кнопкаУдаления = useRef<HTMLButtonElement>(null)
+  const кнопкаОтмены = useRef<HTMLButtonElement>(null)
+
   useEffect(() => {
     let активен = true
     setСостояние('загрузка')
@@ -174,6 +179,24 @@ export function ItemScreen() {
       активен = false
     }
   }, [id, попытка])
+
+  // Подтверждение удаления: фокус сразу на безопасной кнопке, Escape отменяет.
+  // Слушатель на документе, а не на диалоге: фокус может уйти на «Удалить вещь»
+  // в липкой панели, и Escape всё равно обязан работать.
+  useEffect(() => {
+    if (!подтверждениеУдаления) return
+    кнопкаОтмены.current?.focus()
+
+    const приКлавише = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setПодтверждениеУдаления(false)
+      requestAnimationFrame(() => кнопкаУдаления.current?.focus())
+    }
+
+    document.addEventListener('keydown', приКлавише)
+    return () => document.removeEventListener('keydown', приКлавише)
+  }, [подтверждениеУдаления])
 
   const оригинал = изображениеРоли(изображения, 'оригинал')
   const ai = изображениеРоли(изображения, 'ai')
@@ -276,6 +299,12 @@ export function ItemScreen() {
     }
   }
 
+  /** Отмена подтверждения: закрываем диалог и возвращаем фокус на «Удалить вещь». */
+  function отменитьУдаление() {
+    setПодтверждениеУдаления(false)
+    requestAnimationFrame(() => кнопкаУдаления.current?.focus())
+  }
+
   if (состояние === 'загрузка') {
     return (
       <section className={screenStyles.screen}>
@@ -317,47 +346,49 @@ export function ItemScreen() {
   const цветаДляПравки = [...new Set([...ПАЛИТРА_ЦВЕТОВ, ...вещь.цвета])]
 
   return (
-    <section className={screenStyles.screen}>
+    <section className={`${screenStyles.screen} ${styles.screen}`}>
       <header className={styles.header}>
         <button className={styles.back} type="button" onClick={() => navigate('/')}>
           ← Назад
         </button>
       </header>
 
-      <article className={styles.card}>
-        <div className={styles.imageBlock}>
+      <article className={styles.item}>
+        <div className={styles.hero}>
           <div className={styles.imageFrame}>
             {url !== '' && <img className={styles.image} src={url} alt={название} />}
           </div>
+        </div>
 
+        {опции.length > 1 && (
+          <div className={styles.switcher} role="group" aria-label="Изображение">
+            {опции.map((роль) => (
+              <button
+                key={роль}
+                type="button"
+                aria-pressed={выбраннаяРоль === роль}
+                aria-label={МЕТКИ_РОЛЕЙ[роль]}
+                className={
+                  выбраннаяРоль === роль
+                    ? `${styles.switchOption} ${styles.switchOptionActive}`
+                    : styles.switchOption
+                }
+                onClick={() => setВыбраннаяРоль(роль)}
+              >
+                {роль === 'ai' ? 'AI' : МЕТКИ_РОЛЕЙ[роль]}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className={styles.titleRow}>
+          <h1 className={styles.name}>{название}</h1>
           {выбраннаяРоль === 'ai' && (
             <p className={styles.aiBadge} role="note">
               AI-версия
             </p>
           )}
-
-          {опции.length > 1 && (
-            <div className={styles.switcher} role="group" aria-label="Изображение">
-              {опции.map((роль) => (
-                <button
-                  key={роль}
-                  type="button"
-                  aria-pressed={выбраннаяРоль === роль}
-                  className={
-                    выбраннаяРоль === роль
-                      ? `${styles.switchOption} ${styles.switchOptionActive}`
-                      : styles.switchOption
-                  }
-                  onClick={() => setВыбраннаяРоль(роль)}
-                >
-                  {МЕТКИ_РОЛЕЙ[роль]}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
-
-        <h1 className={styles.name}>{название}</h1>
 
         <dl className={styles.attrs}>
           <СтрокаАтрибута label="Состав" value={вещь.состав.join(', ')} />
@@ -439,7 +470,7 @@ export function ItemScreen() {
             value={выбраннаяМодель.slug}
             onChange={выбратьМодель}
           />
-          {задача !== null ? (
+          {задача !== null && (
             <GenerationStatus
               job={задача}
               модель={выбраннаяМодель.title}
@@ -455,64 +486,84 @@ export function ItemScreen() {
                 void сделатьAiВерсию(ai !== undefined)
               }}
             />
-          ) : (
-            <div className={styles.generateRow}>
-              <button
-                className={styles.generate}
-                type="button"
-                disabled={генерация}
-                onClick={() => {
-                  // «Перегенерировать» (AI-версия уже есть) обязана генерировать
-                  // заново; «Сделать AI-версию» — обычный идемпотентный запуск.
-                  void сделатьAiВерсию(ai !== undefined)
-                }}
-              >
-                {генерация
-                  ? 'Готовим AI-версию…'
-                  : `${ai === undefined ? 'Сделать AI-версию' : 'Перегенерировать'} · ${выбраннаяМодель.priceRub} ₽`}
-              </button>
-            </div>
-          )}
-        </section>
-
-        <section className={styles.section} aria-label="Удаление">
-          <h2 className={styles.sectionTitle}>Удаление</h2>
-          {!подтверждениеУдаления && (
-            <button
-              className={styles.danger}
-              type="button"
-              onClick={() => setПодтверждениеУдаления(true)}
-            >
-              Удалить вещь
-            </button>
-          )}
-          {подтверждениеУдаления && (
-            <div className={styles.confirm} role="alertdialog" aria-label="Подтверждение удаления">
-              <p className={styles.confirmText}>
-                Удалить вещь безвозвратно? Оригинал и AI-версия тоже будут удалены.
-              </p>
-              <div className={styles.confirmActions}>
-                <button
-                  className={styles.confirmDelete}
-                  type="button"
-                  onClick={() => {
-                    void удалитьВещьОкончательно()
-                  }}
-                >
-                  Удалить
-                </button>
-                <button
-                  className={styles.confirmCancel}
-                  type="button"
-                  onClick={() => setПодтверждениеУдаления(false)}
-                >
-                  Отмена
-                </button>
-              </div>
-            </div>
           )}
         </section>
       </article>
+
+      <aside className={styles.actionBar} aria-label="Действия с вещью">
+        {подтверждениеУдаления && (
+          <div
+            className={styles.confirm}
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Подтверждение удаления"
+            onKeyDown={(event) => {
+              if (event.key !== 'Tab') return
+              const кнопки = event.currentTarget.querySelectorAll<HTMLButtonElement>('button')
+              const первая = кнопки[0]
+              const последняя = кнопки[кнопки.length - 1]
+              if (event.shiftKey && document.activeElement === первая) {
+                event.preventDefault()
+                последняя?.focus()
+              } else if (!event.shiftKey && document.activeElement === последняя) {
+                event.preventDefault()
+                первая?.focus()
+              }
+            }}
+          >
+            <p className={styles.confirmText}>
+              Удалить вещь безвозвратно? Оригинал и AI-версия тоже будут удалены.
+            </p>
+            <div className={styles.confirmActions}>
+              <button
+                ref={кнопкаОтмены}
+                className={styles.confirmCancel}
+                type="button"
+                onClick={отменитьУдаление}
+              >
+                Отмена
+              </button>
+              <button
+                className={styles.confirmDelete}
+                type="button"
+                onClick={() => {
+                  void удалитьВещьОкончательно()
+                }}
+              >
+                Удалить
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className={styles.actionRow}>
+          {задача === null && (
+            <button
+              className={styles.generate}
+              type="button"
+              disabled={генерация}
+              onClick={() => {
+                // «Перегенерировать» (AI-версия уже есть) обязана генерировать
+                // заново; «Сделать AI-версию» — обычный идемпотентный запуск.
+                void сделатьAiВерсию(ai !== undefined)
+              }}
+            >
+              {генерация
+                ? 'Готовим AI-версию…'
+                : `${ai === undefined ? 'Сделать AI-версию' : 'Перегенерировать'} · ${выбраннаяМодель.priceRub} ₽`}
+            </button>
+          )}
+          <button
+            ref={кнопкаУдаления}
+            className={styles.danger}
+            type="button"
+            aria-label="Удалить вещь"
+            onClick={() => setПодтверждениеУдаления(true)}
+          >
+            Удалить
+          </button>
+        </div>
+      </aside>
     </section>
   )
 }

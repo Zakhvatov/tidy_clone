@@ -15,7 +15,7 @@
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding-bottom: 4px;
+  padding: 2px 2px 6px;
   scrollbar-width: none;
 }
 
@@ -28,6 +28,7 @@
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+  min-height: var(--tap-min);
   padding: 10px 16px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
@@ -43,15 +44,21 @@
 }
 
 .tabActive {
-  border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: #ffffff;
+  border-color: var(--color-accent-strong);
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
 }
 
 .tabCount {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  opacity: 0.7;
+  opacity: 0.85;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .chips {
@@ -61,6 +68,10 @@
 }
 
 .chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap-min);
   padding: 8px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-chip);
@@ -69,13 +80,19 @@
   font-size: 14px;
   cursor: pointer;
   transition:
+    background var(--motion-fast) var(--motion-ease),
     border-color var(--motion-fast) var(--motion-ease),
     color var(--motion-fast) var(--motion-ease);
 }
 
+.chip:active {
+  background: var(--color-bg);
+}
+
 .chipActive {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
+  border-color: var(--color-accent-strong);
+  color: var(--color-accent-strong);
+  background: color-mix(in srgb, var(--color-accent-strong) 8%, var(--color-surface));
 }
 
 .strip {
@@ -86,6 +103,9 @@
   overflow-x: auto;
   list-style: none;
   scrollbar-width: none;
+  touch-action: pan-y;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
 }
 
 .strip::-webkit-scrollbar {
@@ -94,6 +114,7 @@
 
 .stripItem {
   flex: 0 0 auto;
+  scroll-snap-align: start;
 }
 
 .item {
@@ -102,6 +123,7 @@
   align-items: center;
   gap: 6px;
   width: 104px;
+  min-height: var(--tap-min);
   padding: 0;
   border: none;
   background: transparent;
@@ -141,7 +163,7 @@
 }
 
 .itemBadge {
-  color: var(--color-accent);
+  color: var(--color-accent-strong);
   font-size: 12px;
   font-weight: 600;
 }
@@ -166,10 +188,14 @@
 }
 
 .emptyLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap-min);
   padding: 12px 22px;
   border-radius: var(--radius-pill);
-  background: var(--color-accent);
-  color: #ffffff;
+  background: var(--color-accent-strong);
+  color: var(--color-on-accent);
   font-weight: 600;
   text-decoration: none;
   transition: opacity var(--motion-fast) var(--motion-ease);
@@ -177,4 +203,22 @@
 
 .emptyLink:active {
   opacity: 0.85;
+}
+
+.tab:focus-visible,
+.chip:focus-visible,
+.item:focus-visible,
+.emptyLink:focus-visible {
+  outline: var(--focus-ring) solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab,
+  .chip,
+  .item,
+  .itemImage,
+  .emptyLink {
+    transition: none;
+  }
 }
