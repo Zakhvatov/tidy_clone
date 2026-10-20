@@ -15,6 +15,8 @@ export interface DigitizeQueueApi {
   start: () => Promise<void>
   resume: () => Promise<void>
   stop: () => void
+  /** Забывает завершённую очередь: сводка не висит в панели после неудачи. */
+  dismiss: () => Promise<void>
   /** Задачи генерации, чью картинку уже можно забрать (ADR-0006). */
   readyCount: number
   /** Забор идёт прямо сейчас. */
@@ -110,6 +112,10 @@ export function useDigitizeQueue(): DigitizeQueueApi {
     appDigitizeQueue.stop()
   }, [])
 
+  const dismiss = useCallback(async () => {
+    await appDigitizeQueue.dismiss()
+  }, [])
+
   const grab = useCallback(async () => {
     setGrabbing(true)
     setGrabMessage(null)
@@ -138,6 +144,7 @@ export function useDigitizeQueue(): DigitizeQueueApi {
     start,
     resume,
     stop,
+    dismiss,
     readyCount,
     grabbing,
     grabMessage,

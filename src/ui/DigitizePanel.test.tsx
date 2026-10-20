@@ -32,6 +32,7 @@ function setup(overrides: Partial<DigitizeQueueApi> = {}) {
     start: vi.fn(async () => undefined),
     resume: vi.fn(async () => undefined),
     stop: vi.fn(),
+    dismiss: vi.fn(async () => undefined),
     readyCount: 0,
     grabbing: false,
     grabMessage: null,
@@ -147,5 +148,46 @@ describe('Панель оцифровки (T12)', () => {
     setup({ readyCount: 0 })
     render(<DigitizePanel />)
     expect(screen.queryByRole('button', { name: /Забрать готовое/ })).toBeNull()
+  })
+
+  it('завершённая сводка (включая ошибки) убирается кнопкой «Скрыть»', () => {
+    const api = setup({
+      progress: makeProgress({
+        статус: 'завершена',
+        всего: 1,
+        обработано: 1,
+        ошибок: 1,
+        последняяОшибка: 'Не удалось связаться с сервисом',
+      }),
+    })
+    render(<DigitizePanel />)
+
+    expect(screen.getByText('Обработано 1 из 1 · успешно 0 · ошибок 1')).toBeInTheDocument()
+    expect(screen.getByText('Не удалось связаться с сервисом')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Скрыть' }))
+    expect(api.dismiss).toHaveBeenCalledTimes(1)
+  })
+
+  it('«Скрыть» нет: пока очередь идёт и пока есть что продолжать', () => {
+    const { unmount } = render(
+      // (первая отрисовка — выполняется)
+      (() => {
+        setup({
+          busy: true,
+          progress: makeProgress({ статус: 'выполняется', всего: 2, обработано: 1 }),
+        })
+        return <DigitizePanel />
+      })(),
+    )
+    expect(screen.queryByRole('button', { name: 'Скрыть' })).toBeNull()
+    unmount()
+
+    setup({
+      resumable: true,
+      progress: makeProgress({ статус: 'остановлена', всего: 4, обработано: 1, осталось: 3 }),
+    })
+    render(<DigitizePanel />)
+    expect(screen.queryByRole('button', { name: 'Скрыть' })).toBeNull()
   })
 })

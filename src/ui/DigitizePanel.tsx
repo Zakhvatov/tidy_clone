@@ -30,18 +30,36 @@ function статусТекст(статус: string): string {
  * «Забрать готовое (N)» — разовый забор уже сгенерированных картинок без
  * новых оплат.
  *
+ * Завершённая сводка (прогресс, ошибки) не залипает: её можно убрать кнопкой
+ * «Скрыть» — очередь забывается, панель возвращается к кнопке запуска.
+ *
  * Компонент самодостаточен: он один знает про очередь, поэтому врезка в
  * `WardrobeScreen` — одна строка.
  */
 export function DigitizePanel() {
-  const { progress, busy, resumable, startError, start, resume, stop, readyCount, grabbing, grabMessage, grab } =
-    useDigitizeQueue()
+  const {
+    progress,
+    busy,
+    resumable,
+    startError,
+    start,
+    resume,
+    stop,
+    dismiss,
+    readyCount,
+    grabbing,
+    grabMessage,
+    grab,
+  } = useDigitizeQueue()
   const online = useOnline()
 
   const всего = progress.всего
   const обработано = progress.обработано
   const процент = всего > 0 ? Math.round((обработано / всего) * 100) : 0
   const показыватьПрогресс = всего > 0
+  // Завершённая сводка (в том числе с ошибками) не должна висеть вечно —
+  // её можно убрать кнопкой, как уведомление.
+  const можноСкрыть = !busy && progress.статус === 'завершена' && всего > 0
 
   return (
     <section className={styles.panel}>
@@ -71,6 +89,11 @@ export function DigitizePanel() {
         ) : (
           <button className={styles.primary} type="button" onClick={() => void start()}>
             Оцифровать всё, где нет пакшота
+          </button>
+        )}
+        {можноСкрыть && (
+          <button className={styles.secondary} type="button" onClick={() => void dismiss()}>
+            Скрыть
           </button>
         )}
       </div>

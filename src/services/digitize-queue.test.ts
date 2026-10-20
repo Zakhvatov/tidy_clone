@@ -221,6 +221,24 @@ describe('Очередь оцифровки (T12)', () => {
     expect(queue.progress.статус).toBe('завершена')
   })
 
+  it('dismiss забывает завершённую очередь: сводка не висит, хранилище чистое', async () => {
+    await seed(1)
+    const generate = vi.fn(async () => {
+      throw new Error('Не удалось связаться с сервисом')
+    })
+    const queue = new DigitizeQueue(queueOptions({ generate, maxAttempts: 1, id: idFactory('ai') }))
+
+    await queue.start()
+    expect(queue.progress.статус).toBe('завершена')
+    expect(queue.progress.последняяОшибка).toBe('Не удалось связаться с сервисом')
+
+    await queue.dismiss()
+
+    expect(queue.progress.статус).toBe('пусто')
+    expect(queue.progress.всего).toBe(0)
+    expect(await loadQueue()).toBeUndefined()
+  })
+
   it('429 rate_limited — повторяемая ошибка: вещь доходит до успеха', async () => {
     await seed(1)
     let calls = 0
