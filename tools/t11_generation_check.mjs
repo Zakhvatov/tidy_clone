@@ -70,14 +70,14 @@ async function probeGen(prompt, attempt = 1) {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ prompt }),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(100_000),
   })
   const data = await response.json().catch(() => null)
   if (!response.ok || !data?.ok) {
-    // Workers AI отвечает таймаутом волнами: одна попытка может занять 30 с
-    // и упасть, следующая — 1.5 с и успех. Поэтому терпеливо повторяем.
-    if (attempt < 8) {
-      await sleep(Math.min(1000 * 2 ** attempt, 8000))
+    // Каждая попытка стоит денег (7 ₽ за кадр), а таймаут клиента не отменяет
+    // работу на сервере (D6). Поэтому максимум две попытки, не восемь.
+    if (attempt < 2) {
+      await sleep(3000)
       return probeGen(prompt, attempt + 1)
     }
     throw new Error(`/gen ${response.status}: ${JSON.stringify(data).slice(0, 300)}`)
@@ -172,7 +172,8 @@ for (const group of SAMPLES) {
     }
     const ms = Date.now() - started
 
-    const file = join(OUT_DIR, `${group.top}-${index}-${card.subjectName ?? 'item'}.jpg`)
+    const extension = /png/i.test(gen.contentType ?? '') ? 'png' : /webp/i.test(gen.contentType ?? '') ? 'webp' : 'jpg'
+    const file = join(OUT_DIR, `${group.top}-${index}-${card.subjectName ?? 'item'}.${extension}`)
     writeFileSync(file, buffer)
 
     const frame = decodeJpeg(file)

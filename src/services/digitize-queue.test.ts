@@ -261,6 +261,21 @@ describe('Очередь оцифровки (T12)', () => {
     expect(await items.count()).toBe(3)
   })
 
+  it('402 billing — очередь останавливается, повтор не тратит деньги', async () => {
+    await seed(3)
+    const generate = vi.fn(async () => {
+      throw new TidyApiError('billing', 'Закончился баланс генерации. Пополните кошелёк сервиса.')
+    })
+    const queue = new DigitizeQueue(queueOptions({ generate, id: idFactory('ai') }))
+
+    await queue.start()
+
+    expect(generate).toHaveBeenCalledTimes(1)
+    expect(queue.progress.статус).toBe('остановлена')
+    expect(queue.progress.последняяОшибка).toMatch(/баланс/i)
+    expect(queue.progress.осталось).toBe(3)
+  })
+
   it('возобновление после «перезапуска» продолжает с того же места', async () => {
     await seed(6)
     let callsA = 0

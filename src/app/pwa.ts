@@ -1,5 +1,7 @@
 import type { VitePWAOptions } from 'vite-plugin-pwa'
 
+import { appBase } from './basePath'
+
 /**
  * Настройки service worker'а (T1/T19).
  *
@@ -18,5 +20,5 @@ export const workbox: VitePWAOptions['workbox'] = {
   skipWaiting: true,
   globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'],
   // Офлайн-заглушка навигации: любая навигация отдаёт precache-оболочку SPA.
-  navigateFallback: '/index.html',
+  navigateFallback: `${appBase}index.html`,
 }

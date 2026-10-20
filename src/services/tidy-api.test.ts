@@ -58,6 +58,22 @@ describe('tidy-api: понятные ошибки', () => {
     expect(error).toMatchObject({ code: 'unauthorized', status: 401, message: 'Неверный клиентский токен' })
   })
 
+  it('402 → billing с понятным текстом про баланс', async () => {
+    const { impl } = fakeFetch(
+      jsonResponse(402, { error: { code: 'billing', message: 'Закончился баланс генерации' } }),
+    )
+    const error = await requestJson('/x', { fetchImpl: impl }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(TidyApiError)
+    expect(error).toMatchObject({ code: 'billing', status: 402, message: 'Закончился баланс генерации' })
+  })
+
+  it('402 без текста → billing с запасным сообщением', async () => {
+    const { impl } = fakeFetch(jsonResponse(402, { error: { code: 'billing' } }))
+    const error = await requestJson('/x', { fetchImpl: impl }).catch((e: unknown) => e)
+    expect(error).toMatchObject({ code: 'billing', status: 402 })
+    expect((error as Error).message).toMatch(/баланс/i)
+  })
+
   it('429 → rate_limited с понятным текстом по умолчанию', async () => {
     const { impl } = fakeFetch(jsonResponse(429, { error: { code: 'rate_limited' } }))
     const error = await requestJson('/x', { fetchImpl: impl }).catch((e: unknown) => e)
@@ -150,6 +166,23 @@ describe('tidy-api: заголовок и генерация', () => {
     expect(calls[0]?.url).toBe('https://worker.test/generate')
     expect(calls[0]?.init?.method).toBe('POST')
     expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({ prompt: 'hoodie, full garment' })
+  })
+
+  it('generateImage передаёт выбранную модель', async () => {
+    const jpeg = new Response(new Uint8Array([1]), {
+      status: 200,
+      headers: { 'content-type': 'image/jpeg' },
+    })
+    const { impl, calls } = fakeFetch(jpeg)
+    await generateImage('hoodie', {
+      fetchImpl: impl,
+      baseUrl: 'https://worker.test',
+      model: 'nano-banana-2-1',
+    })
+    expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({
+      prompt: 'hoodie',
+      model: 'nano-banana-2-1',
+    })
   })
 
   it('JSON вместо картинки и пустой ответ → invalid_response', async () => {

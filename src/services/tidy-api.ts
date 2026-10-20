@@ -8,12 +8,13 @@
  * `classify-photo.ts` и `digitize.ts` ходят только через этот клиент.
  *
  * Контракт воркера (ADR-0003, `workers/api`):
- *   POST /generate  {prompt, width?, height?} → image/jpeg байтами
+ *   GET  /models                              → {models:[{slug,title,priceRub}], defaultSlug}
+ *   POST /generate  {prompt, model?, width?, height?} → image/* байтами
  *   POST /classify  {imageBase64, mimeType}   → {category, subcategory, confidence}
- *   GET  /health                              → {ok, ai}
+ *   GET  /health                              → {ok, generate, classify}
  *   ошибка:                                   → {error:{code,message}}
  *
- * Секреты воркера (Workers AI, ключ vision-провайдера) на клиент не попадают.
+ * Секреты воркера (ключ генерации, ключ vision-провайдера) на клиент не попадают.
  * Клиентский токен — не секрет доступа к данным, а барьер от посторонних:
  * он лежит в сборке (`VITE_TIDY_CLIENT_TOKEN`) и уходит заголовком.
  */
@@ -21,28 +22,39 @@
 /** Базовый URL воркера по умолчанию. Переопределяется `VITE_TIDY_API_URL`. */
 export const DEFAULT_API_URL = 'https://tidy-api.megabaff2011.workers.dev'
 
-/** Таймаут одного запроса по умолчанию. Генерация 1024×1024 укладывается в секунды. */
+/** Таймаут обычного запроса (классификация, служебные). */
 export const DEFAULT_TIMEOUT_MS = 30_000
+
+/**
+ * Таймаут генерации. Провайдер асинхронный: воркер ставит задачу, опрашивает
+ * статус и скачивает файл. Держим больше воркерского предела (75 с), чтобы
+ * получить его 504 с текстом, а не оборванное соединение.
+ */
+export const GENERATE_TIMEOUT_MS = 90_000
 
 /** Путь генерации AI-версии. */
 export const GENERATE_PATH = '/generate'
+
+/** Путь каталога моделей генерации. */
+export const MODELS_PATH = '/models'
 
 /** Путь распознавания категории по фото. */
 export const CLASSIFY_PATH = '/classify'
 
 /**
  * Коды ошибок клиента. Часть приходит от воркера (`unauthorized`,
- * `rate_limited`, `not_configured`, `bad_request`, `server`), часть — из
+ * `rate_limited`, `billing`, `not_configured`, `bad_request`, `server`), часть — из
  * окружения браузера (`network`, `timeout`, `aborted`, `invalid_response`),
  * а `image_too_large`/`unsupported_media` проверяются на клиенте до отправки.
  *
- * `unauthorized` и `rate_limited` выделены намеренно: у них разные понятные
- * тексты и разная тактика (401 — не ретраить, 429 — подождать и повторить).
+ * `unauthorized`, `billing` и `rate_limited` выделены намеренно: у них разные
+ * понятные тексты и разная тактика (401/402 — не ретраить, 429 — подождать).
  */
 export type TidyApiErrorCode =
   | 'not_configured'
   | 'unauthorized'
   | 'rate_limited'
+  | 'billing'
   | 'image_too_large'
   | 'unsupported_media'
   | 'not_found'
@@ -149,6 +161,13 @@ export async function errorFromResponse(response: Response): Promise<TidyApiErro
     return new TidyApiError(
       'unauthorized',
       message || 'Сервис отклонил запрос: неверный или отсутствующий клиентский токен',
+      { status: response.status },
+    )
+  }
+  if (response.status === 402 || code === 'billing') {
+    return new TidyApiError(
+      'billing',
+      message || 'Закончился баланс генерации. Пополните кошелёк сервиса.',
       { status: response.status },
     )
   }
@@ -283,28 +302,32 @@ export async function requestBlob(
 // Генерация AI-версии
 // ---------------------------------------------------------------------------
 
-/** Опции генерации: размер кадра воркер принимает, но пока игнорирует. */
+/** Опции генерации: размер валидируется, но провайдер всегда рисует 1:1 / 1K. */
 export interface GenerateImageOptions extends TidyRequestOptions {
   width?: number
   height?: number
+  /** Slug модели из `GET /models`. Без него воркер берёт модель по умолчанию. */
+  model?: string
 }
 
 /**
  * Просит воркер сгенерировать каталожное изображение по промпту. Возвращает
- * `Blob` (JPEG 1024×1024). Промпт строит вызывающий: доменное знание о вещи
- * не должно утекать в транспорт.
+ * `Blob` (квадратный кадр 1K; формат — тот, что отдал провайдер). Промпт строит
+ * вызывающий: доменное знание о вещи не должно утекать в транспорт.
  */
 export async function generateImage(
   prompt: string,
   options: GenerateImageOptions = {},
 ): Promise<Blob> {
-  const { width, height, headers, ...rest } = options
+  const { width, height, model, headers, timeoutMs, ...rest } = options
   const payload: Record<string, unknown> = { prompt }
   if (width !== undefined) payload.width = width
   if (height !== undefined) payload.height = height
+  if (model !== undefined && model.trim() !== '') payload.model = model.trim()
 
   return requestBlob(GENERATE_PATH, {
     ...rest,
+    timeoutMs: timeoutMs ?? GENERATE_TIMEOUT_MS,
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(headers ?? {}) },
     body: JSON.stringify(payload),

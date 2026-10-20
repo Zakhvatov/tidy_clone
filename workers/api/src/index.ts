@@ -3,14 +3,20 @@
  *
  * Зачем посредник (ADR-0003): браузер не может звать AI-API напрямую из-за CORS,
  * а токены не должны лежать на телефоне. Секреты живут только здесь:
- *   - Workers AI доступен через binding `AI` (аккаунт Cloudflare);
+ *   - ключ генерации (`api.iskragen.ru`) — через секрет `ISKRAGEN_API_KEY`;
  *   - vision-модель (провайдер `opencode-go`) — через секрет `OPENCODE_API_KEY`.
  * В клиент ничего из этого не попадает.
  *
+ * Генерация у IskraGen асинхронная: `POST /generations` → 202 `{id}`, затем
+ * опрос `GET /generations/:id` до `SUCCEEDED` и скачивание через
+ * `GET /generations/:id/download`. Воркер прячет эту схему: клиент по-прежнему
+ * получает байты картинки одним ответом.
+ *
  * Маршруты:
- *   POST /generate  {prompt, width?, height?} → image/jpeg байтами
+ *   GET  /models                              → {models:[{slug,title,priceRub}], defaultSlug}
+ *   POST /generate  {prompt, model?, width?, height?} → image/* байтами
  *   POST /classify  {imageBase64, mimeType}   → {category, subcategory, confidence}
- *   GET  /health                              → {ok, ai}
+ *   GET  /health                              → {ok, generate, classify}
  */
 
 import {
@@ -20,16 +26,21 @@ import {
   classifyFromModel,
   type Classification,
 } from "./taxonomy";
-import { CLASSIFY_TIMEOUT_MS } from "./config";
-
-/** Опции Workers AI: `signal` позволяет отменить подзапрос при таймауте. */
-export interface AiRunOptions {
-  signal?: AbortSignal;
-}
-
-export interface AiBinding {
-  run(model: string, input: Record<string, unknown>, options?: AiRunOptions): Promise<unknown>;
-}
+import {
+  CLASSIFY_TIMEOUT_MS,
+  GENERATE_POLL_INTERVAL_MS,
+  GENERATE_TIMEOUT_MS,
+  IMAGE_DOWNLOAD_TIMEOUT_MS,
+  MAX_GENERATE_IMAGE_BYTES,
+  MODELS_TIMEOUT_MS,
+} from "./config";
+import {
+  DEFAULT_IMAGE_MODEL_SLUG,
+  IMAGE_MODELS,
+  findImageModel,
+  frameParams,
+  type ImageModel,
+} from "./models";
 
 /** Binding Cloudflare Rate Limiting (`ratelimits` в wrangler.jsonc). */
 export interface RateLimitBinding {
@@ -37,8 +48,15 @@ export interface RateLimitBinding {
 }
 
 export interface Env {
-  /** Binding Workers AI (`ai.binding = "AI"` в wrangler.jsonc). */
-  AI?: AiBinding;
+  /**
+   * Секрет: ключ генерации `api.iskragen.ru` (`wrangler secret put ISKRAGEN_API_KEY`).
+   * Если не задан — `/generate` отвечает 503 `not_configured`.
+   */
+  ISKRAGEN_API_KEY?: string;
+  /** Slug модели; по умолчанию `gpt-image-2-text-to-image`. Переопределяется var-ом. */
+  ISKRAGEN_MODEL_SLUG?: string;
+  /** Базовый URL провайдера; по умолчанию `ISKRAGEN_BASE_URL`. */
+  ISKRAGEN_BASE_URL?: string;
   /** Секрет: ключ провайдера `opencode-go`. В репозиторий не попадает. */
   OPENCODE_API_KEY?: string;
   /**
@@ -52,11 +70,15 @@ export interface Env {
   GENERATE_RATE_LIMITER?: RateLimitBinding;
   /** Лимитер классификации (40 запросов/мин). */
   CLASSIFY_RATE_LIMITER?: RateLimitBinding;
+  /** Лимитер каталога моделей. */
+  MODELS_RATE_LIMITER?: RateLimitBinding;
   /** Общий лимитер: fallback, если отдельные bindings не сконфигурированы. */
   RATE_LIMITER?: RateLimitBinding;
 }
 
-export const GENERATE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
+/** Провайдер генерации: агрегатор в рублях, асинхронные задачи + polling. */
+export const ISKRAGEN_BASE_URL = "https://api.iskragen.ru/v1";
+export const ISKRAGEN_MODEL_SLUG = "gpt-image-2-text-to-image";
 export const VISION_PROVIDER = "opencode-go";
 export const VISION_MODEL = "deepseek-v4.1-flash";
 export const VISION_BASE_URL = "https://opencode.ai/zen/go/v1";
@@ -77,14 +99,14 @@ export function newOpencodeSessionId(): string {
   return crypto.randomUUID();
 }
 
-const DEFAULT_ALLOWED_ORIGINS = "https://tidy-clone.pages.dev,http://localhost:5173";
+const DEFAULT_ALLOWED_ORIGINS =
+  "https://zakhvatov.github.io,https://tidy-clone.pages.dev,http://localhost:5173";
 
 const MAX_PROMPT_CHARS = 800;
 const MAX_GENERATE_BODY_BYTES = 16 * 1024;
 const MAX_CLASSIFY_BODY_BYTES = 4 * 1024 * 1024;
 const MIN_DIMENSION = 256;
 const MAX_DIMENSION = 2048;
-const GENERATE_TIMEOUT_MS = 30_000;
 
 const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 
@@ -102,6 +124,7 @@ export type ApiErrorCode =
   | "not_configured"
   | "unauthorized"
   | "rate_limited"
+  | "billing"
   | "model_timeout"
   | "model_error";
 
@@ -176,6 +199,7 @@ export function corsHeaders(request: Request, env: Env): Record<string, string> 
     vary: "Origin",
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-headers": `content-type, ${CLIENT_TOKEN_HEADER}`,
+    "access-control-expose-headers": "x-tidy-model, x-tidy-cost-rub",
     "access-control-max-age": "86400",
   };
   const origin = request.headers.get("Origin");
@@ -373,7 +397,7 @@ async function rateLimitKey(request: Request): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export type ProtectedRoute = "generate" | "classify";
+export type ProtectedRoute = "generate" | "classify" | "models";
 
 /**
  * Cloudflare Rate Limiting. Отсутствие binding в локальном запуске — не ошибка:
@@ -383,7 +407,9 @@ async function enforceRateLimit(request: Request, env: Env, route: ProtectedRout
   const limiter =
     route === "generate"
       ? env.GENERATE_RATE_LIMITER ?? env.RATE_LIMITER
-      : env.CLASSIFY_RATE_LIMITER ?? env.RATE_LIMITER;
+      : route === "classify"
+        ? env.CLASSIFY_RATE_LIMITER ?? env.RATE_LIMITER
+        : env.MODELS_RATE_LIMITER ?? env.RATE_LIMITER;
   if (!limiter || typeof limiter.limit !== "function") return;
 
   let outcome: { success: boolean };
@@ -402,32 +428,6 @@ async function enforceRateLimit(request: Request, env: Env, route: ProtectedRout
 async function guardProtected(request: Request, env: Env, route: ProtectedRoute): Promise<void> {
   await requireClientToken(request, env);
   await enforceRateLimit(request, env, route);
-}
-
-/**
- * Workers AI с настоящей отменой подзапроса. `env.AI.run(model, input, { signal })`
- * умеет прерывать работу по `AbortSignal`, поэтому по таймауту генерация govt
- * останавливается и нейроны больше не тратятся (прежний `withTimeout` лишь
- * отбрасывал промис, а подзапрос продолжал жить).
- */
-async function runAiWithTimeout(
-  ai: AiBinding,
-  model: string,
-  input: Record<string, unknown>,
-  ms: number,
-): Promise<unknown> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  try {
-    return await ai.run(model, input, { signal: controller.signal });
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new HttpError(504, "model_timeout", "Модель не ответила за отведённое время");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /**
@@ -476,7 +476,17 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   try {
     if (path === "/health") {
       if (request.method !== "GET") throw methodNotAllowed("GET");
-      return jsonResponse(200, { ok: true, ai: isAiAvailable(env) }, request, env);
+      return jsonResponse(
+        200,
+        { ok: true, generate: isGenerateConfigured(env), classify: hasVisionKey(env) },
+        request,
+        env,
+      );
+    }
+    if (path === "/models") {
+      if (request.method !== "GET") throw methodNotAllowed("GET");
+      await guardProtected(request, env, "models");
+      return await handleModels(request, env);
     }
     if (path === "/generate") {
       if (request.method !== "POST") throw methodNotAllowed("POST");
@@ -498,8 +508,298 @@ function methodNotAllowed(allow: string): HttpError {
   return new HttpError(405, "method_not_allowed", `Поддерживается только метод ${allow}`, allow);
 }
 
-function isAiAvailable(env: Env): boolean {
-  return typeof env.AI?.run === "function";
+function hasVisionKey(env: Env): boolean {
+  return (env.OPENCODE_API_KEY?.trim().length ?? 0) > 0;
+}
+
+function isGenerateConfigured(env: Env): boolean {
+  return (env.ISKRAGEN_API_KEY?.trim().length ?? 0) > 0;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function providerBaseUrl(env: Env): string {
+  return (env.ISKRAGEN_BASE_URL?.trim() || ISKRAGEN_BASE_URL).replace(/\/+$/, "");
+}
+
+function providerModel(env: Env): string {
+  return env.ISKRAGEN_MODEL_SLUG?.trim() || ISKRAGEN_MODEL_SLUG;
+}
+
+/** Статусы, после которых опрашивать бессмысленно: задача уже провалилась. */
+const TERMINAL_FAILED_STATUSES = new Set(["FAILED", "REFUNDED", "CANCELLED", "ENQUEUE_FAILED"]);
+
+interface GenerationResult {
+  bytes: Uint8Array;
+  contentType: string;
+  costRub: number | null;
+}
+
+/**
+ * Создаёт задачу и ждёт результат. Провайдер асинхронный, поэтому здесь
+ * последовательность: POST → polling → download. Клиент видит один ответ.
+ */
+async function generateViaProvider(
+  apiKey: string,
+  env: Env,
+  prompt: string,
+  model: ImageModel,
+): Promise<GenerationResult> {
+  const base = providerBaseUrl(env);
+  // Один общий дедлайн на POST + polling + download: клиент не должен ждать
+  // дольше, чем мы обещаем, а воркер — висеть после ухода клиента.
+  const deadline = Date.now() + GENERATE_TIMEOUT_MS;
+
+  let created: Response;
+  try {
+    created = await fetchWithTimeout(
+      `${base}/generations`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          modelSlug: model.slug,
+          prompt,
+          params: frameParams(model),
+        }),
+      },
+      timeoutUntil(deadline),
+      "model_timeout",
+    );
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    console.error(`[tidy-api] generate: провайдер недоступен: ${shortError(error)}`);
+    throw new HttpError(502, "model_error", "Сервис генерации недоступен");
+  }
+
+  if (!created.ok) throw generationUpstreamError(created.status, "create");
+
+  const payload = await created.json().catch(() => null);
+  const id = isRecord(payload) && typeof payload.id === "string" ? payload.id : "";
+  if (id.length === 0) {
+    console.error("[tidy-api] generate: провайдер не вернул id задачи");
+    throw new HttpError(502, "model_error", "Сервис генерации вернул некорректный ответ");
+  }
+  let costRub = isRecord(payload) && typeof payload.costRub === "number" ? payload.costRub : null;
+  let status = isRecord(payload) && typeof payload.status === "string" ? payload.status : "PENDING";
+
+  while (status === "PENDING" || status === "PROCESSING") {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      console.error(`[tidy-api] generate: задача ${id} не завершилась за ${GENERATE_TIMEOUT_MS} мс`);
+      throw new HttpError(504, "model_timeout", "Генерация не завершилась за отведённое время");
+    }
+    await sleep(Math.min(GENERATE_POLL_INTERVAL_MS, remaining));
+
+    const state = await fetchGenerationState(base, apiKey, id, deadline);
+    status = state.status;
+    if (state.costRub !== null) costRub = state.costRub;
+  }
+
+  if (status !== "SUCCEEDED") {
+    const known = TERMINAL_FAILED_STATUSES.has(status) ? status : "UNKNOWN";
+    console.error(`[tidy-api] generate: задача ${id} завершилась статусом ${known}`);
+    throw new HttpError(502, "model_error", "Сервис не смог сгенерировать изображение");
+  }
+
+  const downloaded = await downloadResult(base, apiKey, id, deadline);
+  return { ...downloaded, costRub };
+}
+
+/** Сколько осталось до общего дедлайна; истёк — 504, а не бесконечное ожидание. */
+function timeoutUntil(deadline: number): number {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) {
+    throw new HttpError(504, "model_timeout", "Генерация не завершилась за отведённое время");
+  }
+  return Math.min(IMAGE_DOWNLOAD_TIMEOUT_MS, remaining);
+}
+
+async function fetchGenerationState(
+  base: string,
+  apiKey: string,
+  id: string,
+  deadline: number,
+): Promise<{ status: string; costRub: number | null }> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      `${base}/generations/${encodeURIComponent(id)}`,
+      { headers: { authorization: `Bearer ${apiKey}` } },
+      timeoutUntil(deadline),
+      "model_timeout",
+    );
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    console.error(`[tidy-api] generate: статус недоступен: ${shortError(error)}`);
+    throw new HttpError(502, "model_error", "Сервис генерации недоступен");
+  }
+
+  if (!response.ok) throw generationUpstreamError(response.status, "poll");
+
+  const payload = await response.json().catch(() => null);
+  if (!isRecord(payload) || typeof payload.status !== "string") {
+    throw new HttpError(502, "model_error", "Сервис генерации вернул некорректный ответ");
+  }
+  return {
+    status: payload.status,
+    costRub: typeof payload.costRub === "number" ? payload.costRub : null,
+  };
+}
+
+async function downloadResult(
+  base: string,
+  apiKey: string,
+  id: string,
+  deadline: number,
+): Promise<{ bytes: Uint8Array; contentType: string }> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      `${base}/generations/${encodeURIComponent(id)}/download?index=0`,
+      { headers: { authorization: `Bearer ${apiKey}` } },
+      timeoutUntil(deadline),
+      "model_timeout",
+    );
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    console.error(`[tidy-api] generate: скачивание не удалось: ${shortError(error)}`);
+    throw new HttpError(502, "model_error", "Не удалось скачать готовое изображение");
+  }
+
+  if (!response.ok) throw generationUpstreamError(response.status, "download");
+
+  const contentType = imageContentType(response.headers.get("content-type"));
+  if (contentType.length === 0) {
+    console.error("[tidy-api] generate: провайдер вернул не изображение");
+    throw new HttpError(502, "model_error", "Сервис генерации вернул не изображение");
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length === 0) {
+    throw new HttpError(502, "model_error", "Сервис генерации вернул пустое изображение");
+  }
+  if (bytes.length > MAX_GENERATE_IMAGE_BYTES) {
+    console.error(`[tidy-api] generate: результат ${bytes.length} байт больше потолка`);
+    throw new HttpError(502, "model_error", "Сервис генерации вернул слишком большое изображение");
+  }
+  return { bytes, contentType };
+}
+
+function imageContentType(raw: string | null): string {
+  const value = (raw ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+  return value.startsWith("image/") ? value : "";
+}
+
+/**
+ * HTTP-ошибки провайдера в наши коды. Баланс и лимит частоты — отдельные коды:
+ * клиент по ним не ретраит, а показывает понятный текст.
+ */
+function generationUpstreamError(
+  status: number,
+  stage: "create" | "poll" | "download",
+): HttpError {
+  console.error(`[tidy-api] generate: провайдер ${stage} ответил ${status}`);
+  if (status === 402) return new HttpError(402, "billing", "Закончился баланс генерации");
+  if (status === 429) {
+    return new HttpError(429, "rate_limited", "Сервис генерации ограничил частоту запросов");
+  }
+  if (status === 401 || status === 403) {
+    return new HttpError(503, "not_configured", "Сервис генерации отклонил ключ или модель");
+  }
+  return new HttpError(502, "model_error", "Сервис генерации вернул ошибку");
+}
+
+/**
+ * Модель для конкретного запроса. Клиент может выбрать из каталога; без
+ * выбора работает модель из `ISKRAGEN_MODEL_SLUG` (совместимость с прежним
+ * контрактом). Произвольный slug не принимаем: только известные text-to-image.
+ */
+function selectImageModel(value: unknown, env: Env): ImageModel {
+  if (value === undefined || value === null) {
+    const configured = providerModel(env);
+    return (
+      findImageModel(configured) ?? {
+        // Конфиг может указывать на модель вне нашего каталога — не ломаем
+        // старый сценарий, но и не обещаем ей каталог в UI.
+        slug: configured,
+        title: configured,
+        priceRub: 0,
+        aspectParam: "aspect_ratio",
+        supportsResolution: true,
+      }
+    );
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new HttpError(400, "invalid_input", "Поле model должно быть непустой строкой");
+  }
+  const model = findImageModel(value.trim());
+  if (model === undefined) {
+    throw new HttpError(400, "invalid_input", "Неизвестная модель генерации");
+  }
+  return model;
+}
+
+/** Свежие цены из публичного каталога провайдера; сбой не должен ломать выбор. */
+async function readCatalogPrices(env: Env): Promise<Map<string, number>> {
+  const apiKey = env.ISKRAGEN_API_KEY?.trim();
+  const headers: Record<string, string> = {};
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+
+  const response = await fetchWithTimeout(
+    `${providerBaseUrl(env)}/catalog/`,
+    { headers },
+    MODELS_TIMEOUT_MS,
+    "model_timeout",
+  );
+  if (!response.ok) {
+    throw new HttpError(502, "model_error", "Каталог моделей недоступен");
+  }
+
+  const payload: unknown = await response.json().catch(() => null);
+  const prices = new Map<string, number>();
+  if (!isRecord(payload) || !Array.isArray(payload.models)) return prices;
+  for (const item of payload.models) {
+    if (!isRecord(item)) continue;
+    const slug = item.slug;
+    const price = item.sellPriceRub;
+    if (typeof slug === "string" && typeof price === "number" && Number.isFinite(price)) {
+      prices.set(slug, price);
+    }
+  }
+  return prices;
+}
+
+/**
+ * Каталог для выбора в приложении. Отдаём только text-to-image модели и
+ * подтягиваем цены провайдера; если каталог недоступен — остаются цены из
+ * `models.ts`, чтобы выбор и генерация работали без лишнего запроса.
+ */
+async function handleModels(request: Request, env: Env): Promise<Response> {
+  let prices = new Map<string, number>();
+  try {
+    prices = await readCatalogPrices(env);
+  } catch (error) {
+    console.error(`[tidy-api] GET /models: каталог недоступен: ${shortError(error)}`);
+  }
+
+  const models = IMAGE_MODELS.map((model) => ({
+    slug: model.slug,
+    title: model.title,
+    priceRub: prices.get(model.slug) ?? model.priceRub,
+  }));
+  const configured = providerModel(env);
+  const defaultSlug =
+    findImageModel(configured)?.slug ?? DEFAULT_IMAGE_MODEL_SLUG;
+
+  return jsonResponse(
+    200,
+    { models, defaultSlug, pricesLive: prices.size > 0 },
+    request,
+    env,
+  );
 }
 
 async function handleGenerate(request: Request, env: Env): Promise<Response> {
@@ -514,66 +814,40 @@ async function handleGenerate(request: Request, env: Env): Promise<Response> {
     throw new HttpError(400, "invalid_input", `Промпт длиннее ${MAX_PROMPT_CHARS} символов`);
   }
 
-  // width/height валидируем и принимаем в API, но у flux-1-schnell фиксированный кадр
-  // (его схема допускает только `prompt` и `steps`, additionalProperties: false),
-  // поэтому в модель они не уходят. Поля оставлены на будущие модели с выбором размера.
+  // Клиент присылает квадратный кадр. Провайдер задаёт размер через
+  // `params.aspect_ratio` + `resolution`, поэтому width/height валидируем,
+  // но в запрос не передаём: 1:1 + 1K — то, что ждут сетка и коллаж.
   readDimension(body.width, "width");
   readDimension(body.height, "height");
   if (body.width !== undefined || body.height !== undefined) {
-    console.log("[tidy-api] размер кадра проигнорирован: flux-1-schnell отдаёт 1024x1024");
+    console.log("[tidy-api] размер кадра задан провайдеру как 1:1 / 1K");
   }
 
-  const ai = env.AI;
-  if (!ai || typeof ai.run !== "function") {
-    throw new HttpError(500, "internal_error", "Workers AI недоступен");
+  const model = selectImageModel(body.model, env);
+
+  const apiKey = env.ISKRAGEN_API_KEY?.trim();
+  if (!apiKey) {
+    throw new HttpError(503, "not_configured", "Генерация недоступна: не настроен ключ ISKRAGEN_API_KEY");
   }
 
-  let output: unknown;
-  try {
-    output = await runAiWithTimeout(ai, GENERATE_MODEL, { prompt: rawPrompt, steps: 4 }, GENERATE_TIMEOUT_MS);
-  } catch (error) {
-    if (error instanceof HttpError) throw error;
-    console.error(`[tidy-api] generate model error: ${shortError(error)}`);
-    throw new HttpError(502, "model_error", "Модель генерации вернула ошибку");
-  }
+  const started = Date.now();
+  const result = await generateViaProvider(apiKey, env, rawPrompt, model);
+  console.log(
+    `[tidy-api] POST /generate → 200, ${result.bytes.length} байт, ` +
+      `модель ${model.slug}, ${Date.now() - started} мс, ` +
+      `стоимость ${result.costRub ?? "?"} ₽, промпт ${promptChars} символов`,
+  );
 
-  const bytes = await readImageBytes(output);
-  if (!bytes || bytes.length === 0) {
-    console.error("[tidy-api] generate: модель вернула пустой ответ");
-    throw new HttpError(502, "model_error", "Модель генерации вернула пустой ответ");
-  }
-
-  console.log(`[tidy-api] POST /generate → 200, ${bytes.length} байт, промпт ${promptChars} символов`);
-  return new Response(bytes, {
+  return new Response(result.bytes, {
     status: 200,
     headers: {
-      "content-type": "image/jpeg",
+      "content-type": result.contentType,
       "cache-control": "no-store",
+      "x-tidy-model": model.slug,
+      ...(result.costRub === null ? {} : { "x-tidy-cost-rub": String(result.costRub) }),
       ...corsHeaders(request, env),
     },
   });
-}
-
-/** Binding Workers AI умеет отдавать и Response, и объект с base64. */
-async function readImageBytes(output: unknown): Promise<Uint8Array | null> {
-  if (output instanceof Response) {
-    return new Uint8Array(await output.arrayBuffer());
-  }
-  if (isRecord(output) && typeof output.image === "string") {
-    return decodeBase64(output.image);
-  }
-  return null;
-}
-
-function decodeBase64(value: string): Uint8Array | null {
-  try {
-    const binary = atob(value);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    return bytes;
-  } catch {
-    return null;
-  }
 }
 
 async function handleClassify(request: Request, env: Env): Promise<Response> {

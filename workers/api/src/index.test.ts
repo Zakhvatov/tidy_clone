@@ -7,7 +7,12 @@ import {
   parseModelJson,
   type Env,
 } from "./index";
-import { CLASSIFY_TIMEOUT_MS, DEFAULT_FRAME_SIZE } from "./config";
+import {
+  CLASSIFY_TIMEOUT_MS,
+  DEFAULT_FRAME_SIZE,
+  GENERATE_POLL_INTERVAL_MS,
+  GENERATE_TIMEOUT_MS,
+} from "./config";
 import {
   FALLBACK_CATEGORY,
   FALLBACK_SUBCATEGORY,
@@ -31,9 +36,10 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
   };
 }
 
-function get(path: string, origin?: string): Request {
+function get(path: string, origin?: string, token?: string): Request {
   const headers: Record<string, string> = {};
   if (origin) headers.origin = origin;
+  if (token) headers[CLIENT_TOKEN_HEADER] = token;
   return new Request(`${BASE}${path}`, { method: "GET", headers });
 }
 
@@ -105,8 +111,62 @@ function options(path: string, origin?: string): Request {
   return new Request(`${BASE}${path}`, { method: "OPTIONS", headers });
 }
 
-function aiEnv(result: unknown): Env {
-  return makeEnv({ AI: { run: vi.fn(async () => result) } });
+const ISKRA_KEY = "iskra-test-key";
+
+function iskraEnv(overrides: Partial<Env> = {}): Env {
+  return makeEnv({ ISKRAGEN_API_KEY: ISKRA_KEY, ...overrides });
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function imageResponse(
+  bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+  contentType = "image/png",
+): Response {
+  return new Response(bytes, { headers: { "content-type": contentType } });
+}
+
+interface ProviderScript {
+  /** Ответ POST /generations. По умолчанию задача сразу SUCCEEDED. */
+  create?: Response;
+  /** Последовательные ответы GET /generations/:id; исчерпались → PROCESSING. */
+  states?: Response[];
+  /** Ответ GET /generations/:id/download. */
+  download?: Response;
+}
+
+/**
+ * Мок IskraGen: один `fetch` на три ручки. Возвращает мок, чтобы тесты могли
+ * проверить тело запроса и заголовки.
+ */
+function stubProvider(script: ProviderScript = {}) {
+  const states = [...(script.states ?? [])];
+  const fetchMock = vi.fn(async (input: Request | string | URL, _init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/generations")) {
+      return script.create ?? jsonResponse({ id: "gen-1", status: "SUCCEEDED", costRub: 7 }, 202);
+    }
+    if (url.endsWith("/download?index=0")) {
+      return script.download ?? imageResponse();
+    }
+    if (/\/generations\/[^/]+$/.test(url)) {
+      return states.shift() ?? jsonResponse({ id: "gen-1", status: "PROCESSING", costRub: 7 });
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+/** Окружение с полным успешным прогоном провайдера (POST → SUCCEEDED → download). */
+function iskraSuccessEnv(overrides: Partial<Env> = {}): Env {
+  stubProvider();
+  return iskraEnv(overrides);
 }
 
 function visionResponse(content: string, status = 200): Response {
@@ -131,16 +191,85 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("GET /health", () => {
-  it("сообщает ai:true, когда binding AI подключён", async () => {
-    const response = await handleRequest(get("/health"), aiEnv(undefined));
+  it("сообщает, настроены ли генерация и классификация", async () => {
+    const response = await handleRequest(
+      get("/health"),
+      makeEnv({ ISKRAGEN_API_KEY: "key", OPENCODE_API_KEY: "key" }),
+    );
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, ai: true });
+    expect(await response.json()).toEqual({ ok: true, generate: true, classify: true });
   });
 
-  it("сообщает ai:false, когда binding AI отсутствует", async () => {
+  it("без ключей обе возможности выключены", async () => {
     const response = await handleRequest(get("/health"), makeEnv());
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true, ai: false });
+    expect(await response.json()).toEqual({ ok: true, generate: false, classify: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /models
+// ---------------------------------------------------------------------------
+
+describe("GET /models", () => {
+  const CATALOG = {
+    total: 2,
+    models: [
+      { slug: "nano-banana-2-1", mediaType: "IMAGE", sellPriceRub: 3 },
+      { slug: "midjourney-text-to-image", mediaType: "IMAGE", sellPriceRub: 25 },
+      { slug: "some-video-model", mediaType: "VIDEO", sellPriceRub: 60 },
+    ],
+  };
+
+  it("отдаёт text-to-image модели с живыми ценами провайдера", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(CATALOG)));
+
+    const response = await handleRequest(get("/models", ORIGIN, CLIENT_TOKEN), iskraEnv());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+
+    const body = (await response.json()) as {
+      models: { slug: string; title: string; priceRub: number }[];
+      defaultSlug: string;
+      pricesLive: boolean;
+    };
+    expect(body.pricesLive).toBe(true);
+    expect(body.defaultSlug).toBe("gpt-image-2-text-to-image");
+    expect(body.models).toHaveLength(9);
+    expect(body.models.find((m) => m.slug === "nano-banana-2-1")?.priceRub).toBe(3);
+    expect(body.models.find((m) => m.slug === "midjourney-text-to-image")?.priceRub).toBe(25);
+    expect(body.models.some((m) => m.slug === "some-video-model")).toBe(false);
+  });
+
+  it("без клиентского токена → 401", async () => {
+    const response = await handleRequest(get("/models"), iskraEnv());
+    expect(response.status).toBe(401);
+    expect((await errorBody(response)).code).toBe("unauthorized");
+  });
+
+  it("недоступный каталог не ломает выбор: остаются цены из models.ts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("catalog down");
+      }),
+    );
+
+    const response = await handleRequest(get("/models", undefined, CLIENT_TOKEN), iskraEnv());
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      models: { slug: string; priceRub: number }[];
+      pricesLive: boolean;
+    };
+    expect(body.pricesLive).toBe(false);
+    expect(body.models.find((m) => m.slug === "nano-banana-2-1")?.priceRub).toBe(4);
+    expect(body.models.find((m) => m.slug === "midjourney-text-to-image")?.priceRub).toBe(20);
+  });
+
+  it("POST /models → 405 и Allow: GET", async () => {
+    const response = await handleRequest(post("/models", {}), iskraEnv());
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET");
   });
 });
 
@@ -172,12 +301,12 @@ describe("CORS", () => {
   });
 
   it("проставляет CORS в обычном ответе", async () => {
-    const response = await handleRequest(get("/health", OTHER_ORIGIN), aiEnv(undefined));
+    const response = await handleRequest(get("/health", OTHER_ORIGIN), iskraEnv());
     expect(response.headers.get("access-control-allow-origin")).toBe(OTHER_ORIGIN);
   });
 
   it("не проставляет CORS чужому источнику", async () => {
-    const response = await handleRequest(get("/health", "https://evil.example"), aiEnv(undefined));
+    const response = await handleRequest(get("/health", "https://evil.example"), iskraEnv());
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 
@@ -218,7 +347,7 @@ describe("клиентский токен", () => {
   });
 
   it("без заголовка x-tidy-client → 401 unauthorized", async () => {
-    const generate = await handleRequest(post("/generate", { prompt: "hoodie" }, undefined, { token: null }), aiEnv(undefined));
+    const generate = await handleRequest(post("/generate", { prompt: "hoodie" }, undefined, { token: null }), iskraEnv());
     expect(generate.status).toBe(401);
     expect((await errorBody(generate)).code).toBe("unauthorized");
 
@@ -232,7 +361,7 @@ describe("клиентский токен", () => {
   it("неверный токен → 401 unauthorized", async () => {
     const response = await handleRequest(
       post("/generate", { prompt: "hoodie" }, undefined, { token: "wrong-token" }),
-      aiEnv(undefined),
+      iskraEnv(),
     );
     expect(response.status).toBe(401);
     expect((await errorBody(response)).code).toBe("unauthorized");
@@ -241,10 +370,10 @@ describe("клиентский токен", () => {
   it("верный токен пропускает запрос", async () => {
     const response = await handleRequest(
       post("/generate", { prompt: "hoodie" }),
-      aiEnv(new Response(new Uint8Array([1]), { headers: { "content-type": "image/jpeg" } })),
+      iskraSuccessEnv(),
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("content-type")).toMatch(/^image\//);
   });
 });
 
@@ -259,23 +388,20 @@ describe("ограничение тела на потоке", () => {
     const body = generateBody(LIMIT);
     expect(new TextEncoder().encode(body).length).toBe(LIMIT);
     const request = new Request(`${BASE}/generate`, { method: "POST", headers: authHeaders(undefined), body });
-    const response = await handleRequest(request, aiEnv(new Response(new Uint8Array([1]))));
+    const response = await handleRequest(request, iskraSuccessEnv());
     expect(response.status).toBe(200);
   });
 
   it("Content-Length больше лимита → 413 без чтения тела", async () => {
-    const run = vi.fn(async () => new Response(new Uint8Array([1])));
     const { request, pulled } = streamRequest("/generate", [], { contentLength: LIMIT + 1 });
-    const response = await handleRequest(request, makeEnv({ AI: { run } }));
+    const response = await handleRequest(request, iskraEnv());
     expect(response.status).toBe(413);
     expect((await errorBody(response)).code).toBe("payload_too_large");
-    expect(run).not.toHaveBeenCalled();
     // Тело не вычитано ни на один чанк.
     expect(pulled()).toBe(0);
   });
 
   it("chunked без Content-Length: тело больше лимита → 413 и поток обрывается", async () => {
-    const run = vi.fn(async () => new Response(new Uint8Array([1])));
     const { request, cancelled, pulled } = streamRequest("/generate", [
       new Uint8Array(LIMIT + 1),
       new Uint8Array(LIMIT),
@@ -283,10 +409,9 @@ describe("ограничение тела на потоке", () => {
       new Uint8Array(LIMIT),
       new Uint8Array(LIMIT),
     ]);
-    const response = await handleRequest(request, makeEnv({ AI: { run } }));
+    const response = await handleRequest(request, iskraEnv());
     expect(response.status).toBe(413);
     expect((await errorBody(response)).code).toBe("payload_too_large");
-    expect(run).not.toHaveBeenCalled();
     expect(cancelled()).toBe(true);
     // Всё тело не вычитано: чтение прекращено на первом же превышении.
     expect(pulled()).toBeLessThan(5);
@@ -295,7 +420,7 @@ describe("ограничение тела на потоке", () => {
   it("chunked ровно на границе проходит", async () => {
     const body = new TextEncoder().encode(generateBody(LIMIT));
     const { request } = streamRequest("/generate", [body.subarray(0, 8000), body.subarray(8000)]);
-    const response = await handleRequest(request, aiEnv(new Response(new Uint8Array([1]))));
+    const response = await handleRequest(request, iskraSuccessEnv());
     expect(response.status).toBe(200);
   });
 });
@@ -306,14 +431,14 @@ describe("ограничение тела на потоке", () => {
 
 describe("методы и маршруты", () => {
   it("GET /generate → 405 и Allow: POST", async () => {
-    const response = await handleRequest(get("/generate"), aiEnv(undefined));
+    const response = await handleRequest(get("/generate"), iskraEnv());
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("POST");
     expect((await errorBody(response)).code).toBe("method_not_allowed");
   });
 
   it("POST /health → 405 и Allow: GET", async () => {
-    const response = await handleRequest(post("/health", {}), aiEnv(undefined));
+    const response = await handleRequest(post("/health", {}), iskraEnv());
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("GET");
   });
@@ -331,48 +456,48 @@ describe("методы и маршруты", () => {
 
 describe("POST /generate: валидация", () => {
   it("без prompt → 400", async () => {
-    const response = await handleRequest(post("/generate", {}), aiEnv(undefined));
+    const response = await handleRequest(post("/generate", {}), iskraEnv());
     expect(response.status).toBe(400);
     expect((await errorBody(response)).code).toBe("invalid_input");
   });
 
   it("пустой prompt → 400", async () => {
-    const response = await handleRequest(post("/generate", { prompt: "   " }), aiEnv(undefined));
+    const response = await handleRequest(post("/generate", { prompt: "   " }), iskraEnv());
     expect(response.status).toBe(400);
   });
 
   it("prompt из 801 символа → 400", async () => {
-    const response = await handleRequest(post("/generate", { prompt: "x".repeat(801) }), aiEnv(undefined));
+    const response = await handleRequest(post("/generate", { prompt: "x".repeat(801) }), iskraEnv());
     expect(response.status).toBe(400);
   });
 
   it("prompt ровно из 800 символов принимается", async () => {
     const response = await handleRequest(
       post("/generate", { prompt: "x".repeat(800) }),
-      aiEnv(new Response(new Uint8Array([1]), { headers: { "content-type": "image/jpeg" } })),
+      iskraSuccessEnv(),
     );
     expect(response.status).toBe(200);
   });
 
   it("нечисловой width → 400, а не 500", async () => {
-    const response = await handleRequest(post("/generate", { prompt: "hoodie", width: "big" }), aiEnv(undefined));
+    const response = await handleRequest(post("/generate", { prompt: "hoodie", width: "big" }), iskraEnv());
     expect(response.status).toBe(400);
   });
 
   it("width вне диапазона → 400", async () => {
-    const response = await handleRequest(post("/generate", { prompt: "hoodie", width: 64 }), aiEnv(undefined));
+    const response = await handleRequest(post("/generate", { prompt: "hoodie", width: 64 }), iskraEnv());
     expect(response.status).toBe(400);
   });
 
   it("битый JSON → 400", async () => {
     const request = new Request(`${BASE}/generate`, { method: "POST", headers: authHeaders(undefined), body: "{not json" });
-    const response = await handleRequest(request, aiEnv(undefined));
+    const response = await handleRequest(request, iskraEnv());
     expect(response.status).toBe(400);
     expect((await errorBody(response)).code).toBe("invalid_input");
   });
 
   it("слишком большое тело → 413", async () => {
-    const response = await handleRequest(post("/generate", { prompt: "x".repeat(20_000) }), aiEnv(undefined));
+    const response = await handleRequest(post("/generate", { prompt: "x".repeat(20_000) }), iskraEnv());
     expect(response.status).toBe(413);
     expect((await errorBody(response)).code).toBe("payload_too_large");
   });
@@ -387,23 +512,18 @@ describe("ограничение частоты", () => {
     const limiter = { limit: vi.fn(async () => ({ success: false })) };
     const response = await handleRequest(
       post("/generate", { prompt: "hoodie" }),
-      makeEnv({
-        AI: { run: vi.fn(async () => new Response(new Uint8Array([1]))) },
-        GENERATE_RATE_LIMITER: limiter,
-      }),
+      iskraEnv({ GENERATE_RATE_LIMITER: limiter }),
     );
     expect(response.status).toBe(429);
     expect((await errorBody(response)).code).toBe("rate_limited");
   });
 
   it("успешный лимит пропускает запрос, ключ — хэш IP, а не IP", async () => {
+    stubProvider();
     const limiter = { limit: vi.fn(async (_options: { key: string }) => ({ success: true })) };
     const response = await handleRequest(
       post("/generate", { prompt: "hoodie" }),
-      makeEnv({
-        AI: { run: vi.fn(async () => new Response(new Uint8Array([1]))) },
-        GENERATE_RATE_LIMITER: limiter,
-      }),
+      iskraEnv({ GENERATE_RATE_LIMITER: limiter }),
     );
     expect(response.status).toBe(200);
     expect(limiter.limit).toHaveBeenCalledTimes(1);
@@ -418,12 +538,14 @@ describe("ограничение частоты", () => {
       "fetch",
       vi.fn(async () => visionResponse(JSON.stringify({ category: "Обувь", subcategory: "кроссовки", confidence: 0.9 }))),
     );
-    const env = makeEnv({ OPENCODE_API_KEY: "key", GENERATE_RATE_LIMITER: generateLimiter, CLASSIFY_RATE_LIMITER: classifyLimiter });
+    const env = makeEnv({
+      ISKRAGEN_API_KEY: ISKRA_KEY,
+      OPENCODE_API_KEY: "key",
+      GENERATE_RATE_LIMITER: generateLimiter,
+      CLASSIFY_RATE_LIMITER: classifyLimiter,
+    });
 
-    const generateResponse = await handleRequest(
-      post("/generate", { prompt: "hoodie" }),
-      { ...env, AI: { run: vi.fn(async () => new Response(new Uint8Array([1]))) } },
-    );
+    const generateResponse = await handleRequest(post("/generate", { prompt: "hoodie" }), env);
     expect(generateResponse.status).toBe(429);
     expect(generateLimiter.limit).toHaveBeenCalled();
 
@@ -436,6 +558,7 @@ describe("ограничение частоты", () => {
   });
 
   it("сбой лимитера не роняет сервис (fail-open)", async () => {
+    stubProvider();
     const limiter = {
       limit: vi.fn(async () => {
         throw new Error("limiter down");
@@ -443,19 +566,14 @@ describe("ограничение частоты", () => {
     };
     const response = await handleRequest(
       post("/generate", { prompt: "hoodie" }),
-      makeEnv({
-        AI: { run: vi.fn(async () => new Response(new Uint8Array([1]))) },
-        GENERATE_RATE_LIMITER: limiter,
-      }),
+      iskraEnv({ GENERATE_RATE_LIMITER: limiter }),
     );
     expect(response.status).toBe(200);
   });
 
   it("без binding лимитера запрос проходит (локальный запуск)", async () => {
-    const response = await handleRequest(
-      post("/generate", { prompt: "hoodie" }),
-      makeEnv({ AI: { run: vi.fn(async () => new Response(new Uint8Array([1]))) } }),
-    );
+    stubProvider();
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
     expect(response.status).toBe(200);
   });
 });
@@ -464,90 +582,242 @@ describe("ограничение частоты", () => {
 // POST /generate — модель
 // ---------------------------------------------------------------------------
 
-describe("POST /generate: модель", () => {
-  it("отдаёт image/jpeg байтами и CORS", async () => {
+describe("POST /generate: провайдер", () => {
+  it("ставит задачу, опрашивает статус и отдаёт байты с CORS", async () => {
     const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0x00, 0x10]);
-    const response = await handleRequest(
-      post("/generate", { prompt: "hoodie", width: DEFAULT_FRAME_SIZE, height: DEFAULT_FRAME_SIZE }, ORIGIN),
-      aiEnv(new Response(bytes, { headers: { "content-type": "image/jpeg" } })),
-    );
+    const fetchMock = stubProvider({
+      create: jsonResponse({ id: "gen-42", status: "PENDING", costRub: 7 }, 202),
+      states: [
+        jsonResponse({ id: "gen-42", status: "PROCESSING" }),
+        jsonResponse({ id: "gen-42", status: "SUCCEEDED", costRub: 7 }),
+      ],
+      download: imageResponse(bytes, "image/jpeg"),
+    });
+
+    vi.useFakeTimers();
+    let response: Response;
+    try {
+      const pending = handleRequest(
+        post("/generate", { prompt: "hoodie", width: DEFAULT_FRAME_SIZE, height: DEFAULT_FRAME_SIZE }, ORIGIN),
+        iskraEnv(),
+      );
+      await vi.advanceTimersByTimeAsync(GENERATE_POLL_INTERVAL_MS * 2);
+      response = await pending;
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/jpeg");
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("access-control-allow-origin")).toBe(ORIGIN);
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
-  });
 
-  it("понимает ответ модели в виде base64", async () => {
-    const response = await handleRequest(
-      post("/generate", { prompt: "hoodie" }),
-      aiEnv({ image: btoa(String.fromCharCode(1, 2, 3)) }),
-    );
-    expect(response.status).toBe(200);
-    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
-  });
-
-  it("ошибка модели → 502 model_error без утечки стектрейса", async () => {
-    const run = vi.fn(async () => {
-      throw new Error("internal stack: secret-token-123");
+    // create + два опроса + download
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const [createUrl, createInit] = fetchMock.mock.calls[0]!;
+    expect(String(createUrl)).toBe("https://api.iskragen.ru/v1/generations");
+    const headers = (createInit?.headers ?? {}) as Record<string, string>;
+    expect(headers.authorization).toBe(`Bearer ${ISKRA_KEY}`);
+    const sent = JSON.parse(String(createInit?.body)) as Record<string, unknown>;
+    expect(sent).toEqual({
+      modelSlug: "gpt-image-2-text-to-image",
+      prompt: "hoodie",
+      params: { aspect_ratio: "1:1", resolution: "1K" },
     });
-    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), makeEnv({ AI: { run } }));
+    expect(sent).not.toHaveProperty("width");
+    expect(sent).not.toHaveProperty("height");
+  });
+
+  it("скачивает результат через /download с авторизацией", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    expect(response.status).toBe(200);
+
+    const [url, init] = fetchMock.mock.calls[1]!;
+    expect(String(url)).toBe("https://api.iskragen.ru/v1/generations/gen-1/download?index=0");
+    expect((init?.headers as Record<string, string>).authorization).toBe(`Bearer ${ISKRA_KEY}`);
+  });
+
+  it("успешная задача сразу (без polling) не ждёт", async () => {
+    stubProvider();
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+  });
+
+  it("без ключа → 503 not_configured", async () => {
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), makeEnv());
+    expect(response.status).toBe(503);
+    expect((await errorBody(response)).code).toBe("not_configured");
+  });
+
+  it("402 провайдера → 402 billing", async () => {
+    stubProvider({ create: jsonResponse({ error: { code: "INSUFFICIENT_BALANCE" } }, 402) });
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    expect(response.status).toBe(402);
+    expect((await errorBody(response)).code).toBe("billing");
+  });
+
+  it("401 провайдера → 503 not_configured без утечки ключа", async () => {
+    stubProvider({ create: jsonResponse({ error: { code: "AUTHENTICATION_ERROR" } }, 401) });
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    expect(response.status).toBe(503);
+
+    const body = await response.json();
+    expect((body as { error: { code: string } }).error.code).toBe("not_configured");
+    expect(JSON.stringify(body)).not.toContain(ISKRA_KEY);
+  });
+
+  it("429 провайдера → 429 rate_limited", async () => {
+    stubProvider({ create: jsonResponse({ error: { code: "RATE_LIMIT_ERROR" } }, 429) });
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    expect(response.status).toBe(429);
+    expect((await errorBody(response)).code).toBe("rate_limited");
+  });
+
+  it("5xx провайдера → 502 model_error", async () => {
+    stubProvider({ create: jsonResponse({ error: { code: "API_ERROR" } }, 502) });
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    expect(response.status).toBe(502);
+    expect((await errorBody(response)).code).toBe("model_error");
+  });
+
+  it("сетевой сбой провайдера → 502 без утечки деталей", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNRESET secret-internal");
+      }),
+    );
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
     expect(response.status).toBe(502);
 
     const body = await response.json();
     expect((body as { error: { code: string } }).error.code).toBe("model_error");
-    expect(JSON.stringify(body)).not.toContain("secret-token-123");
-    expect(JSON.stringify(body)).not.toContain("internal stack");
+    expect(JSON.stringify(body)).not.toContain("secret-internal");
   });
 
-  it("пустой ответ модели → 502", async () => {
-    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), aiEnv(null));
+  it("ответ без id задачи → 502", async () => {
+    stubProvider({ create: jsonResponse({ status: "PENDING" }, 202) });
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
     expect(response.status).toBe(502);
+    expect((await errorBody(response)).code).toBe("model_error");
   });
 
-  it("отсутствие binding AI → 500 без утечки деталей", async () => {
-    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), makeEnv());
-    expect(response.status).toBe(500);
-    expect((await errorBody(response)).code).toBe("internal_error");
-  });
-
-  it("не передаёт width/height в flux-1-schnell (additionalProperties: false)", async () => {
-    const run = vi.fn(async (_model: string, _input: Record<string, unknown>) => new Response(new Uint8Array([9])));
-    const response = await handleRequest(
-      post("/generate", { prompt: "hoodie", width: 512, height: 512 }),
-      makeEnv({ AI: { run } }),
-    );
-    expect(response.status).toBe(200);
-
-    const input = run.mock.calls[0]![1];
-    expect(input).toEqual({ prompt: "hoodie", steps: 4 });
-    expect(input).not.toHaveProperty("width");
-    expect(input).not.toHaveProperty("height");
-  });
-
-  it("таймаут генерации отменяет подзапрос через AbortSignal", async () => {
+  it("FAILED задачи → 502 model_error", async () => {
+    stubProvider({
+      create: jsonResponse({ id: "gen-1", status: "PENDING" }, 202),
+      states: [jsonResponse({ id: "gen-1", status: "FAILED", errorCode: "PROVIDER_ERROR" })],
+    });
     vi.useFakeTimers();
     try {
-      let aborted = false;
-      const run = vi.fn(
-        (_model: string, _input: Record<string, unknown>, options?: { signal?: AbortSignal }) =>
-          new Promise((_resolve, reject) => {
-            options?.signal?.addEventListener("abort", () => {
-              aborted = true;
-              reject(new Error("aborted"));
-            });
-          }),
-      );
-      const pending = handleRequest(post("/generate", { prompt: "hoodie" }), makeEnv({ AI: { run } }));
-      await vi.advanceTimersByTimeAsync(30_000);
+      const pending = handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+      await vi.advanceTimersByTimeAsync(GENERATE_POLL_INTERVAL_MS);
       const response = await pending;
-      expect(response.status).toBe(504);
-      expect((await errorBody(response)).code).toBe("model_timeout");
-      expect(aborted).toBe(true);
+      expect(response.status).toBe(502);
+      expect((await errorBody(response)).code).toBe("model_error");
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("не-картинка вместо файла → 502", async () => {
+    stubProvider({ download: new Response("not an image", { headers: { "content-type": "text/plain" } }) });
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    expect(response.status).toBe(502);
+    expect((await errorBody(response)).code).toBe("model_error");
+  });
+
+  it("пустой файл → 502", async () => {
+    stubProvider({ download: imageResponse(new Uint8Array(0), "image/png") });
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    expect(response.status).toBe(502);
+  });
+
+  it("задача не завершилась за отведённое время → 504 model_timeout", async () => {
+    stubProvider({
+      create: jsonResponse({ id: "gen-1", status: "PENDING" }, 202),
+      states: [],
+    });
+    vi.useFakeTimers();
+    try {
+      const pending = handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+      await vi.advanceTimersByTimeAsync(GENERATE_TIMEOUT_MS + GENERATE_POLL_INTERVAL_MS);
+      const response = await pending;
+      expect(response.status).toBe(504);
+      expect((await errorBody(response)).code).toBe("model_timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /generate — выбор модели
+// ---------------------------------------------------------------------------
+
+describe("POST /generate: выбор модели", () => {
+  function sentBody(fetchMock: ReturnType<typeof stubProvider>): Record<string, unknown> {
+    return JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+  }
+
+  it("передаёт выбранную модель и её параметры кадра", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(
+      post("/generate", {
+        prompt: "hoodie",
+        model: "grok-imagine-image-2-0-text-to-image",
+      }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(200);
+    expect(sentBody(fetchMock)).toEqual({
+      modelSlug: "grok-imagine-image-2-0-text-to-image",
+      prompt: "hoodie",
+      params: { aspect_ratio: "1:1" },
+    });
+    expect(response.headers.get("x-tidy-model")).toBe("grok-imagine-image-2-0-text-to-image");
+    expect(response.headers.get("x-tidy-cost-rub")).toBe("7");
+  });
+
+  it("Qwen получает image_size, а не aspect_ratio", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", model: "qwen3-text-to-image" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(200);
+    expect(sentBody(fetchMock)).toMatchObject({
+      modelSlug: "qwen3-text-to-image",
+      params: { image_size: "1:1", resolution: "1K" },
+    });
+  });
+
+  it("неизвестная модель → 400 без обращения к провайдеру", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", model: "expensive-unknown-model" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(400);
+    expect((await errorBody(response)).code).toBe("invalid_input");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("пустая модель → 400", async () => {
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", model: "  " }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("без model работает модель из конфигурации", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), iskraEnv());
+    expect(response.status).toBe(200);
+    expect(sentBody(fetchMock)).toMatchObject({ modelSlug: "gpt-image-2-text-to-image" });
   });
 });
 

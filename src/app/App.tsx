@@ -28,8 +28,11 @@ export function AppRoutes() {
 }
 
 export function App() {
+  // GitHub Pages отдаёт приложение из подкаталога (`/tidy_clone/`), Cloudflare — с корня.
+  const basename = import.meta.env.BASE_URL.replace(/\/+$/, '') || '/'
+
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename}>
       <AppRoutes />
     </BrowserRouter>
   )

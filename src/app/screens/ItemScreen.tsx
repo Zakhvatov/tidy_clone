@@ -8,6 +8,8 @@ import { listByItem } from '../../storage/images'
 import { get as получитьВещь, remove as удалитьВещь, update as обновитьВещь } from '../../storage/items'
 import { CategoryPicker } from '../../ui/CategoryPicker'
 import { ErrorNotice } from '../../ui/ErrorNotice'
+import { GenerationModelPicker } from '../../ui/GenerationModelPicker'
+import { useGenerationModels } from '../../ui/useGenerationModels'
 import { useObjectUrl } from '../../ui/useObjectUrl'
 import { digitizeItem } from '../../services/digitize'
 import screenStyles from './Screen.module.css'
@@ -113,6 +115,8 @@ function СтрокаАтрибута({ label, value }: { label: string; value: 
 export function ItemScreen() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { models: моделиГенерации, selected: выбраннаяМодель, select: выбратьМодель } =
+    useGenerationModels()
 
   const [состояние, setСостояние] = useState<Состояние>('загрузка')
   const [вещь, setВещь] = useState<Вещь | null>(null)
@@ -231,11 +235,10 @@ export function ItemScreen() {
     setОшибка(null)
     setГенерация(true)
     try {
-      if (force) {
-        await digitizeItem(вещь.id, { force: true })
-      } else {
-        await digitizeItem(вещь.id)
-      }
+      await digitizeItem(вещь.id, {
+        force,
+        model: выбраннаяМодель.slug,
+      })
       const картинки = await listByItem(вещь.id)
       setИзображения(картинки)
       setВыбраннаяРоль('ai')
@@ -416,22 +419,30 @@ export function ItemScreen() {
 
         <section className={styles.section} aria-label="AI-версия">
           <h2 className={styles.sectionTitle}>AI-версия</h2>
-          <button
-            className={styles.generate}
-            type="button"
-            disabled={генерация}
-            onClick={() => {
-              // «Перегенерировать» (AI-версия уже есть) обязана генерировать
-              // заново; «Сделать AI-версию» — обычный идемпотентный запуск.
-              void сделатьAiВерсию(ai !== undefined)
-            }}
-          >
-            {генерация
-              ? 'Готовим AI-версию…'
-              : ai === undefined
-                ? 'Сделать AI-версию'
-                : 'Перегенерировать'}
-          </button>
+          <GenerationModelPicker
+            models={моделиГенерации}
+            value={выбраннаяМодель.slug}
+            onChange={выбратьМодель}
+          />
+          <div className={styles.generateRow}>
+            <button
+              className={styles.generate}
+              type="button"
+              disabled={генерация}
+              onClick={() => {
+                // «Перегенерировать» (AI-версия уже есть) обязана генерировать
+                // заново; «Сделать AI-версию» — обычный идемпотентный запуск.
+                void сделатьAiВерсию(ai !== undefined)
+              }}
+            >
+              {генерация
+                ? 'Готовим AI-версию…'
+                : ai === undefined
+                  ? 'Сделать AI-версию'
+                  : 'Перегенерировать'}
+            </button>
+            <span className={styles.generatePrice}>{выбраннаяМодель.priceRub} ₽ за кадр</span>
+          </div>
         </section>
 
         <section className={styles.section} aria-label="Удаление">

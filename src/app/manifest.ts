@@ -1,5 +1,10 @@
 import type { ManifestOptions } from 'vite-plugin-pwa'
 
+import { appBase } from './basePath'
+
+/** Путь к файлу из `public/` с учётом базового пути сборки. */
+const asset = (path: string) => `${appBase}${path.replace(/^\//, '')}`
+
 /**
  * Web App Manifest приложения «Гардероб».
  *
@@ -14,25 +19,25 @@ export const manifest: Partial<ManifestOptions> = {
   dir: 'ltr',
   display: 'standalone',
   orientation: 'portrait',
-  start_url: '/',
-  scope: '/',
+  start_url: appBase,
+  scope: appBase,
   background_color: '#FFFFFF',
   theme_color: '#FFFFFF',
   icons: [
     {
-      src: '/pwa-192x192.png',
+      src: asset('/pwa-192x192.png'),
       sizes: '192x192',
       type: 'image/png',
       purpose: 'any',
     },
     {
-      src: '/pwa-512x512.png',
+      src: asset('/pwa-512x512.png'),
       sizes: '512x512',
       type: 'image/png',
       purpose: 'any',
     },
     {
-      src: '/maskable-512x512.png',
+      src: asset('/maskable-512x512.png'),
       sizes: '512x512',
       type: 'image/png',
       purpose: 'maskable',

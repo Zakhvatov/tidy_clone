@@ -78,7 +78,10 @@ function describeFailure(error: unknown): QueueFailure {
   if (error instanceof TidyApiError) {
     return {
       message: error.message,
-      fatal: error.code === 'unauthorized' || error.code === 'not_configured',
+      fatal:
+        error.code === 'unauthorized' ||
+        error.code === 'not_configured' ||
+        error.code === 'billing',
     }
   }
   if (error instanceof ОшибкаОцифровки) {

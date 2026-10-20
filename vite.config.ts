@@ -3,10 +3,12 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+import { appBase } from './src/app/basePath'
 import { manifest } from './src/app/manifest'
 import { workbox } from './src/app/pwa'
 
 export default defineConfig({
+  base: appBase,
   plugins: [
     react(),
     VitePWA({

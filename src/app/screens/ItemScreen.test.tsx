@@ -11,6 +11,7 @@ import * as images from '../../storage/images'
 import * as items from '../../storage/items'
 import * as outfits from '../../storage/outfits'
 import { digitizeItem } from '../../services/digitize'
+import { DEFAULT_GENERATION_MODEL_SLUG } from '../../services/generation-models'
 import { AppRoutes } from '../App'
 
 // Воркер/сервис оцифровки в тестах карточки заменяется моком: проверяем саму
@@ -80,6 +81,7 @@ describe('Карточка вещи (T15)', () => {
   beforeEach(async () => {
     await closeDb()
     await deleteDB(DB_NAME)
+    window.localStorage.clear()
     mockedDigitize.mockReset()
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
@@ -291,9 +293,40 @@ describe('Карточка вещи (T15)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Сделать AI-версию' }))
 
-    await waitFor(() => expect(mockedDigitize).toHaveBeenCalledWith('вещь-1'))
+    await waitFor(() =>
+      expect(mockedDigitize).toHaveBeenCalledWith('вещь-1', {
+        force: false,
+        model: DEFAULT_GENERATION_MODEL_SLUG,
+      }),
+    )
     expect(await screen.findByRole('note')).toHaveTextContent('AI-версия')
     expect(await screen.findByRole('button', { name: 'Перегенерировать' })).toBeInTheDocument()
+  })
+
+  it('показывает модели с ценой и передаёт выбранную модель в генерацию', async () => {
+    await items.create(makeItem({ id: 'вещь-1' }))
+    await images.addOriginal(
+      makeImage('о-1', 'вещь-1', 'оригинал', '2024-03-05T10:00:00.000Z', 'orig'),
+    )
+
+    renderItem('вещь-1')
+
+    expect(await screen.findByRole('radio', { name: /Nano Banana 2\.1/ })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /Midjourney/ })).toBeInTheDocument()
+    expect(screen.getByText('20 ₽')).toBeInTheDocument()
+    expect(screen.getByText('7 ₽ за кадр')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('radio', { name: /Nano Banana 2\.1/ }))
+    expect(screen.getByText('4 ₽ за кадр')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Сделать AI-версию' }))
+
+    await waitFor(() =>
+      expect(mockedDigitize).toHaveBeenCalledWith('вещь-1', {
+        force: false,
+        model: 'nano-banana-2-1',
+      }),
+    )
   })
 
   it('кнопка «Перегенерировать» вызывает принудительный режим force', async () => {
@@ -315,7 +348,12 @@ describe('Карточка вещи (T15)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Перегенерировать' }))
 
     // Именно force: иначе сервис T10 вернул бы «уже есть» и запрос бы не ушёл.
-    await waitFor(() => expect(mockedDigitize).toHaveBeenCalledWith('вещь-1', { force: true }))
+    await waitFor(() =>
+      expect(mockedDigitize).toHaveBeenCalledWith('вещь-1', {
+        force: true,
+        model: DEFAULT_GENERATION_MODEL_SLUG,
+      }),
+    )
     await waitFor(() => expect(screen.getByRole('img')).toHaveAttribute('src', 'blob:ai-new'))
   })
 

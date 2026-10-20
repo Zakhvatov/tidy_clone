@@ -1,0 +1,74 @@
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.legend {
+  padding: 0;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-chip);
+  background: var(--color-bg);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--motion-ease),
+    background-color var(--motion-fast) var(--motion-ease);
+}
+
+.option:active {
+  background: var(--color-surface);
+}
+
+.optionActive {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg));
+}
+
+.radio {
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--color-accent);
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text);
+  font-size: 15px;
+}
+
+.price {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.optionActive .price {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}

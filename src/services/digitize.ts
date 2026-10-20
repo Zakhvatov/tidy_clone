@@ -54,6 +54,11 @@ export interface DigitizeDeps {
   now?: () => string
   /** Генератор id. Инжектируется для детерминированных тестов. */
   id?: () => string
+  /**
+   * Slug модели генерации из каталога (`GET /models`). Не задан — воркер
+   * использует модель по умолчанию из своего конфига.
+   */
+  model?: string
   /** Отмена (кнопка «Остановить», уход с экрана). */
   signal?: AbortSignal
   /**
@@ -213,6 +218,7 @@ export async function digitizeItem(
       ? await generateImage(prompt, {
           width: AI_FRAME_SIZE,
           height: AI_FRAME_SIZE,
+          model: deps.model,
           signal: deps.signal,
         })
       : await generate(вещь, оригинал.blob, prompt, deps.signal)

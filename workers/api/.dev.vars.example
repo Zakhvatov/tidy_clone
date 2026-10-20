@@ -4,3 +4,8 @@
 #   npx wrangler secret put CLIENT_TOKEN
 # В репозиторий секрет не попадает; здесь — только для `wrangler dev` и документации.
 CLIENT_TOKEN=__ЗАМЕНИТЕ_НА_СВОЙ_ТОКЕН__
+
+# Ключ генерации IskraGen (https://app.iskragen.ru, раздел «API-ключи»).
+# В проде: npx wrangler secret put ISKRAGEN_API_KEY
+# Локально: этот файл (.dev.vars) в git не попадает.
+ISKRAGEN_API_KEY=
