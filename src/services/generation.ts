@@ -72,6 +72,14 @@ export class ОшибкаГенерации extends Error {
 export interface GenerationRunOptions {
   /** Redraw-промпт (строит вызывающий код из вещи). */
   prompt: string
+  /** Вещь, для которой идёт генерация: метаданные истории генераций. */
+  itemId?: string
+  /** Название вещи для списка генераций. */
+  title?: string
+  /** Категория вещи (верхний уровень таксономии). */
+  category?: string
+  /** Подкатегория вещи. */
+  subcategory?: string
   /** Slug модели из каталога. Без него воркер берёт модель по умолчанию. */
   model?: string
   /** Референс image-to-image: сжатый Оригинал или существующая AI-версия. */
@@ -342,6 +350,10 @@ async function пройти(
       model: options.model,
       image: options.image,
       idempotencyKey: задача.ключ,
+      itemId: options.itemId,
+      title: options.title,
+      category: options.category,
+      subcategory: options.subcategory,
       signal: ctx.signal,
     })
     задача = {

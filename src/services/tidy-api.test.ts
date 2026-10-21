@@ -1,15 +1,18 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { clearAccessToken, saveAccessToken } from '../storage/settings'
 import {
   DEFAULT_API_URL,
+  SESSION_PATH,
   TidyApiError,
   apiBaseUrl,
-  clientTokenFromEnv,
   createGeneration,
   downloadGeneration,
   getGenerationStatus,
   requestBlob,
   requestJson,
+  resolveClientToken,
+  validateAccessToken,
 } from './tidy-api'
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -28,7 +31,15 @@ function fakeFetch(response: Response) {
   return { impl, calls }
 }
 
+beforeEach(() => {
+  window.localStorage.clear()
+  // Большинство тестов проверяют транспорт, а не отсутствие токена: пусть он
+  // будет сохранён, как на реальном устройстве после ввода на `/access`.
+  saveAccessToken('test-token')
+})
+
 afterEach(() => {
+  clearAccessToken()
   vi.unstubAllEnvs()
 })
 
@@ -41,12 +52,49 @@ describe('tidy-api: конфигурация', () => {
     expect(apiBaseUrl('https://explicit.example.com')).toBe('https://explicit.example.com')
   })
 
-  it('клиентский токен: явный, env, пустой', () => {
-    expect(clientTokenFromEnv('  token  ')).toBe('token')
-    expect(clientTokenFromEnv(null)).toBeNull()
-    expect(clientTokenFromEnv('')).toBeNull()
+  it('клиентский токен: явный важнее сохранённого, env больше не читается', () => {
+    expect(resolveClientToken('  token  ')).toBe('token')
+    expect(resolveClientToken(null)).toBeNull()
+    expect(resolveClientToken('')).toBeNull()
+
+    saveAccessToken('device-token')
+    expect(resolveClientToken()).toBe('device-token')
+    expect(resolveClientToken('explicit-token')).toBe('explicit-token')
+
     vi.stubEnv('VITE_TIDY_CLIENT_TOKEN', 'env-token')
-    expect(clientTokenFromEnv()).toBe('env-token')
+    expect(resolveClientToken()).toBe('device-token')
+  })
+
+  it('без токена на устройстве запрос не уходит: unauthorized до сети', async () => {
+    clearAccessToken()
+    const { impl, calls } = fakeFetch(jsonResponse(200, { ok: true }))
+    const error = await requestJson('/x', { fetchImpl: impl }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(TidyApiError)
+    expect(error).toMatchObject({
+      code: 'unauthorized',
+      message: 'Нужен токен доступа. Введите его в разделе «Данные».',
+    })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('явный clientToken: null отправляет запрос без заголовка (для 401)', async () => {
+    const { impl, calls } = fakeFetch(jsonResponse(200, { ok: true }))
+    await requestJson('/x', { fetchImpl: impl, clientToken: null })
+    const headers = calls[0]?.init?.headers as Record<string, string>
+    expect(headers['x-tidy-client']).toBeUndefined()
+  })
+
+  it('GET /session проверяет токен и шлёт его явно', async () => {
+    const { impl, calls } = fakeFetch(jsonResponse(200, { ok: true }))
+    await validateAccessToken('  token  ', {
+      fetchImpl: impl,
+      baseUrl: 'https://worker.test/',
+    })
+    expect(SESSION_PATH).toBe('/session')
+    expect(calls[0]?.url).toBe('https://worker.test/session')
+    expect(calls[0]?.init?.method).toBe('GET')
+    const headers = calls[0]?.init?.headers as Record<string, string>
+    expect(headers['x-tidy-client']).toBe('token')
   })
 })
 
@@ -139,12 +187,12 @@ describe('tidy-api: понятные ошибки', () => {
 })
 
 describe('tidy-api: заголовок и генерация', () => {
-  it('шлёт x-tidy-client из env и content-type', async () => {
-    vi.stubEnv('VITE_TIDY_CLIENT_TOKEN', 'env-token')
+  it('шлёт x-tidy-client с устройства и content-type', async () => {
+    saveAccessToken('device-token')
     const { impl, calls } = fakeFetch(jsonResponse(200, { ok: true }))
     await requestJson('/x', { fetchImpl: impl, method: 'POST', body: '{}' })
     const headers = calls[0]?.init?.headers as Record<string, string>
-    expect(headers['x-tidy-client']).toBe('env-token')
+    expect(headers['x-tidy-client']).toBe('device-token')
   })
 
   it('без токена заголовок не отправляется', async () => {
@@ -177,6 +225,25 @@ describe('tidy-api: заголовок и генерация', () => {
       model: 'nano-banana-2-1',
       idempotencyKey: 'item-1:nano-banana-2-1',
     })
+  })
+
+  it('createGeneration: метаданные вещи уходят в тело, пустые — нет', async () => {
+    const { impl, calls } = fakeFetch(jsonResponse(202, { taskId: 't', status: 'PENDING' }))
+    await createGeneration('hoodie', {
+      fetchImpl: impl,
+      baseUrl: 'https://worker.test',
+      itemId: ' вещь-1 ',
+      title: ' Худи ',
+      category: 'Второй слой',
+      subcategory: '',
+    })
+    expect(JSON.parse(String(calls[0]?.init?.body))).toMatchObject({
+      prompt: 'hoodie',
+      itemId: 'вещь-1',
+      title: 'Худи',
+      category: 'Второй слой',
+    })
+    expect(JSON.parse(String(calls[0]?.init?.body))).not.toHaveProperty('subcategory')
   })
 
   it('createGeneration шлёт референс для i2i (D13)', async () => {

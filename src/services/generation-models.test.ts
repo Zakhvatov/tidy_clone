@@ -88,6 +88,16 @@ describe('generation-models: каталог', () => {
     expect(second.models).toEqual(FALLBACK_GENERATION_MODELS)
   })
 
+  it('без токена отдаёт запасной список и не падает', async () => {
+    const { impl, calls } = fakeFetch(
+      jsonResponse({ models: [{ slug: 'm', title: 'М', priceRub: 1 }], defaultSlug: 'm' }),
+    )
+    const result = await loadGenerationModels({ fetchImpl: impl })
+    expect(result.live).toBe(false)
+    expect(result.models).toEqual(FALLBACK_GENERATION_MODELS)
+    expect(calls()).toBe(0)
+  })
+
   it('по умолчанию выбирает модель сервера, сохранённый выбор важнее', () => {
     const models = [
       { slug: 'a', title: 'A', priceRub: 4 },

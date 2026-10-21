@@ -101,6 +101,7 @@ describe('Экран резервной копии (T19)', () => {
   beforeEach(async () => {
     await closeDb()
     await deleteDB(DB_NAME)
+    window.localStorage.clear()
     Object.defineProperty(URL, 'createObjectURL', {
       configurable: true,
       writable: true,
@@ -122,6 +123,22 @@ describe('Экран резервной копии (T19)', () => {
     renderBackup()
     expect(screen.getByRole('heading', { name: 'Резервная копия' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Данные' })).toBeInTheDocument()
+  })
+
+  it('карточка доступа показывает маскированный токен и ведёт на /access', () => {
+    window.localStorage.setItem('tidy.accessToken', 'abcdef12345649f6')
+    renderBackup()
+
+    expect(screen.getByRole('heading', { name: 'Доступ к генерации' })).toBeInTheDocument()
+    expect(screen.getByText('••••••••49f6')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Изменить токен' })).toHaveAttribute('href', '/access')
+  })
+
+  it('без токена предлагает его ввести', () => {
+    renderBackup()
+
+    expect(screen.getByText(/Токен не задан/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ввести токен' })).toHaveAttribute('href', '/access')
   })
 
   it('экспортирует гардероб одним файлом и сообщает итог', async () => {

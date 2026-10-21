@@ -184,6 +184,44 @@ describe('Карточка вещи (T15)', () => {
     expect(await screen.findByRole('note')).toHaveTextContent('AI-версия')
   })
 
+  it('вещь без Оригинала (восстановленная из истории): показывается AI-версия с бейджем', async () => {
+    await items.create(makeItem({ id: 'вещь-1', источник: 'фото', idИзображений: ['а-1'] }))
+    await images.addAiVersion(
+      makeImage('а-1', 'вещь-1', 'ai', '2024-03-06T10:00:00.000Z', 'ai-реставрация'),
+    )
+
+    renderItem('вещь-1')
+
+    // Роль одна — переключателя нет (как у вещи с одним Оригиналом), но кадр
+    // не пуст: по умолчанию берётся существующая AI-версия с бейджем.
+    await screen.findByRole('heading', { name: 'Худи тестовое' })
+    expect(screen.queryByRole('group', { name: 'Изображение' })).toBeNull()
+    expect(await screen.findByRole('img')).toHaveAttribute('src', 'blob:ai-реставрация')
+    expect(await screen.findByRole('note')).toHaveTextContent('AI-версия')
+  })
+
+  it('вещь без Оригинала, но с вырезом и AI: переключатель без «Оригинал»', async () => {
+    await items.create(makeItem({ id: 'вещь-1', источник: 'фото' }))
+    await images.addAiVersion(
+      makeImage('а-1', 'вещь-1', 'ai', '2024-03-06T10:00:00.000Z', 'ai-реставрация'),
+    )
+    await images.addCutout(
+      makeImage('в-1', 'вещь-1', 'вырез', '2024-03-07T10:00:00.000Z', 'cut'),
+    )
+
+    renderItem('вещь-1')
+
+    const группа = await screen.findByRole('group', { name: 'Изображение' })
+    expect(within(группа).queryByRole('button', { name: 'Оригинал' })).toBeNull()
+    expect(within(группа).getByRole('button', { name: 'AI-версия' })).toBeInTheDocument()
+    expect(within(группа).getByRole('button', { name: 'Вырез' })).toBeInTheDocument()
+    // По умолчанию — AI-версия.
+    expect(await screen.findByRole('img')).toHaveAttribute('src', 'blob:ai-реставрация')
+
+    fireEvent.click(within(группа).getByRole('button', { name: 'Вырез' }))
+    await waitFor(() => expect(screen.getByRole('img')).toHaveAttribute('src', 'blob:cut'))
+  })
+
   it('при наличии только выреза переключатель даёт выбрать Оригинал или Вырез, без AI', async () => {
     await items.create(makeItem({ id: 'вещь-1' }))
     await images.addOriginal(

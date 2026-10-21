@@ -3,11 +3,11 @@ import { useNavigate, useParams } from 'react-router-dom'
 
 import type { ImageRole, Изображение, ItemSource, Season, Вещь } from '../../domain/types'
 import { ПАЛИТРА_ЦВЕТОВ, СЕЗОНЫ } from '../../services/wardrobe-filter'
-import { ОшибкаВещьВОбразе } from '../../storage/errors'
 import { listByItem } from '../../storage/images'
 import { get as получитьВещь, remove as удалитьВещь, update as обновитьВещь } from '../../storage/items'
 import { loadJob, type ЗадачаГенерации } from '../../storage/jobs'
 import { CategoryPicker } from '../../ui/CategoryPicker'
+import { текстОшибкиУдаления } from '../../ui/deleteError'
 import { ErrorNotice } from '../../ui/ErrorNotice'
 import { GenerationModelPicker } from '../../ui/GenerationModelPicker'
 import { GenerationStatus } from '../../ui/GenerationStatus'
@@ -80,18 +80,6 @@ function текстОшибкиОцифровки(error: unknown): string {
   }
   if (error instanceof Error && error.message.trim() !== '') return error.message
   return 'Не удалось сделать AI-версию. Попробуйте ещё раз'
-}
-
-/** Текст ошибки удаления: вещь в образе называем по имени, если оно есть. */
-function текстОшибкиУдаления(error: unknown): string {
-  if (error instanceof ОшибкаВещьВОбразе) {
-    const образ = /входит в образ «([^»]+)»/.exec(error.message)?.[1]
-    if (образ !== undefined) {
-      return `Нельзя удалить: вещь входит в образ «${образ}». Сначала уберите её из образа`
-    }
-    return 'Нельзя удалить вещь: она входит в образ. Сначала уберите её из образа'
-  }
-  return 'Не удалось удалить вещь. Попробуйте ещё раз'
 }
 
 function СтрокаАтрибута({ label, value }: { label: string; value: string }) {
@@ -205,7 +193,10 @@ export function ItemScreen() {
     выбраннаяРоль === 'ai' ? ai : выбраннаяРоль === 'вырез' ? вырез : оригинал
   const url = useObjectUrl(выбранное?.blob)
 
-  const опции: ImageRole[] = ['оригинал']
+  // Переключатель строится только из существующих ролей: у вещи без Оригинала
+  // (восстановленной из истории генераций) он начинается с AI-версии.
+  const опции: ImageRole[] = []
+  if (оригинал !== undefined) опции.push('оригинал')
   if (ai !== undefined) опции.push('ai')
   if (вырез !== undefined) опции.push('вырез')
 

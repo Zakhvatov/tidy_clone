@@ -129,10 +129,12 @@ describe('Экран добавления вещи (T8 + ADR-0006)', () => {
       value: vi.fn(),
     })
     vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas)
+    window.localStorage.setItem('tidy.accessToken', 'test-token')
   })
 
   afterEach(async () => {
     vi.unstubAllGlobals()
+    window.localStorage.clear()
     await closeDb()
     await deleteDB(DB_NAME)
   })
@@ -215,6 +217,19 @@ describe('Экран добавления вещи (T8 + ADR-0006)', () => {
     const [вещь] = await items.list()
     const роли = (await images.listByItem(вещь!.id)).map((i) => i.роль)
     expect(роли).toContain('ai')
+  })
+
+  it('без токена генерация объясняет, что его нужно ввести в «Данных»', async () => {
+    vi.stubGlobal('fetch', makeGenerationFetch())
+    renderAdd()
+
+    await добавитьДоПодтверждения()
+    window.localStorage.clear()
+    fireEvent.click(screen.getByRole('button', { name: /^Сделать AI-версию · \d+ ₽$/ }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Нужен токен доступа. Введите его в разделе «Данные».',
+    )
   })
 
   it('при ошибке классификации фото вещь всё равно сохраняется', async () => {

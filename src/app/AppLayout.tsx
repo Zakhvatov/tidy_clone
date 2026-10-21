@@ -1,5 +1,6 @@
 import {
   Archive,
+  ClockCounterClockwise,
   PlusCircle,
   Question,
   Sparkle,
@@ -21,6 +22,7 @@ const tabs: Tab[] = [
   { to: '/', label: 'Гардероб', end: true, Icon: TShirt },
   { to: '/add', label: 'Добавить', end: false, Icon: PlusCircle },
   { to: '/outfits', label: 'Образы', end: false, Icon: Sparkle },
+  { to: '/generations', label: 'Генерации', end: false, Icon: ClockCounterClockwise },
   { to: '/backup', label: 'Данные', end: false, Icon: Archive },
   { to: '/help', label: 'Помощь', end: false, Icon: Question },
 ]

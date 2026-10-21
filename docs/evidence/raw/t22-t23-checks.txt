@@ -1,0 +1,24 @@
+== npm test (front, 2026-10-21 10:25) ==
+ [32m✓[39m src/storage/settings.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m src/app/pwa.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 2[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m40 passed[39m[22m[90m (40)[39m
+[2m      Tests [22m [1m[32m414 passed[39m[22m[90m (414)[39m
+[2m   Start at [22m 10:25:37
+[2m   Duration [22m 16.34s[2m (transform 2.27s, setup 5.75s, collect 40.37s, tests 33.69s, environment 22.22s, prepare 2.50s)[22m
+
+
+== npx tsc --noEmit && npm run lint && npm run build (front) ==
+tsc: ok
+
+lint: ok
+build: ok
+
+== workers/api: npm test + tsc + wrangler deploy --dry-run ==
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m124 passed[39m[22m[90m (124)[39m
+[2m   Start at [22m 10:26:06
+[2m   Duration [22m 606ms[2m (transform 101ms, setup 0ms, collect 111ms, tests 227ms, environment 0ms, prepare 40ms)[22m
+
+worker tsc: ok
+worker dry-run: ok

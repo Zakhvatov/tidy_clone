@@ -14,6 +14,7 @@
  *   GET  /generate/{taskId}                  → 200 {taskId, status, costRub}
  *   GET  /generate/{taskId}/image            → байты готовой картинки
  *   POST /classify  {imageBase64, mimeType}   → {category, subcategory, confidence}
+ *   GET  /session                             → {ok} — дешёвая проверка токена
  *   GET  /health                              → {ok, generate, classify}
  *   ошибка:                                   → {error:{code,message}}
  *
@@ -23,8 +24,11 @@
  *
  * Секреты воркера (ключ генерации, ключ vision-провайдера) на клиент не попадают.
  * Клиентский токен — не секрет доступа к данным, а барьер от посторонних:
- * он лежит в сборке (`VITE_TIDY_CLIENT_TOKEN`) и уходит заголовком.
+ * пользователь вводит его один раз на экране `/access`, он хранится только на
+ * устройстве (`storage/settings`) и уходит заголовком `x-tidy-client`.
  */
+
+import { readAccessToken } from '../storage/settings'
 
 /** Базовый URL воркера по умолчанию. Переопределяется `VITE_TIDY_API_URL`. */
 export const DEFAULT_API_URL = 'https://tidy-api.megabaff2011.workers.dev'
@@ -63,6 +67,9 @@ export const MODELS_PATH = '/models'
 
 /** Путь распознавания категории по фото. */
 export const CLASSIFY_PATH = '/classify'
+
+/** Путь дешёвой проверки токена — `GET /session`. */
+export const SESSION_PATH = '/session'
 
 /**
  * Коды ошибок клиента. Часть приходит от воркера (`unauthorized`,
@@ -119,7 +126,8 @@ export interface TidyRequestOptions {
   signal?: AbortSignal
   timeoutMs?: number
   /**
-   * Клиентский токен воркера. По умолчанию берётся из `VITE_TIDY_CLIENT_TOKEN`.
+   * Клиентский токен воркера. По умолчанию берётся с устройства
+   * (`storage/settings`); `VITE_TIDY_CLIENT_TOKEN` больше не читается.
    * `null` или пустая строка — запрос без заголовка `x-tidy-client`
    * (воркер ответит 401 `unauthorized`): это явно «не настроено», а не тихий обход.
    */
@@ -141,13 +149,33 @@ export function apiBaseUrl(explicit?: string): string {
 }
 
 /**
- * Клиентский токен воркера. Если `VITE_TIDY_CLIENT_TOKEN` не задан, возвращается
- * `null` и запрос уйдёт без заголовка — воркер ответит 401, и это будет видно.
+ * Клиентский токен: явный параметр важнее сохранённого на устройстве.
+ *
+ * - `explicit !== undefined` — берём его (после `trim`) или `null` для пустого;
+ * - `explicit === undefined` — читаем `storage/settings`.
+ *
+ * `VITE_TIDY_CLIENT_TOKEN` не читается: токен больше не попадает в публичный бандл.
  */
-export function clientTokenFromEnv(explicit?: string | null): string | null {
-  const value = explicit === undefined ? import.meta.env?.VITE_TIDY_CLIENT_TOKEN : explicit
+export function resolveClientToken(explicit?: string | null): string | null {
+  const value = explicit === undefined ? readAccessToken() : explicit
   const trimmed = value?.trim()
   return trimmed ? trimmed : null
+}
+
+/**
+ * Дешёвая проверка токена через `GET /session`. Успех — `resolved` без значения;
+ * неверный токен приходит как {@link TidyApiError} с `code: 'unauthorized'`.
+ */
+export async function validateAccessToken(
+  token: string,
+  options: Omit<TidyRequestOptions, 'clientToken' | 'method' | 'body'> = {},
+): Promise<void> {
+  await requestJson<unknown>(SESSION_PATH, {
+    ...options,
+    clientToken: token,
+    timeoutMs: options.timeoutMs ?? 10_000,
+    method: 'GET',
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +279,17 @@ export async function send(path: string, options: TidyRequestOptions = {}): Prom
   const fetchImpl = options.fetchImpl ?? fetch
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
+  const explicitToken = options.clientToken
+  const clientToken = resolveClientToken(explicitToken)
+  if (explicitToken === undefined && clientToken === null) {
+    // Токен не задан ни явно, ни на устройстве: сеть не нужна, ответ воркера
+    // всё равно был бы 401. Говорим об этом сразу и понятным текстом.
+    throw new TidyApiError(
+      'unauthorized',
+      'Нужен токен доступа. Введите его в разделе «Данные».',
+    )
+  }
+
   const controller = new AbortController()
   let timedOut = false
   const timer = setTimeout(() => {
@@ -263,7 +302,6 @@ export async function send(path: string, options: TidyRequestOptions = {}): Prom
   if (options.signal?.aborted) controller.abort()
 
   const headers: Record<string, string> = { ...(options.headers ?? {}) }
-  const clientToken = clientTokenFromEnv(options.clientToken)
   if (clientToken !== null) headers['x-tidy-client'] = clientToken
 
   let response: Response
@@ -409,6 +447,14 @@ export interface CreateGenerationOptions extends TidyRequestOptions {
    * списания** (ADR-0006). Ключ генерируется и сохраняется на клиенте до отправки.
    */
   idempotencyKey?: string
+  /** Вещь, для которой генерируется AI-версия: метаданные истории генераций. */
+  itemId?: string
+  /** Название вещи для списка генераций. */
+  title?: string
+  /** Категория вещи (верхний уровень таксономии). */
+  category?: string
+  /** Подкатегория вещи. */
+  subcategory?: string
 }
 
 /** Форматы входного изображения, которые принимает воркер генерации. */
@@ -461,13 +507,32 @@ export async function createGeneration(
   prompt: string,
   options: CreateGenerationOptions = {},
 ): Promise<GenerationTask> {
-  const { width, height, model, image, idempotencyKey, headers, timeoutMs, ...rest } = options
+  const {
+    width,
+    height,
+    model,
+    image,
+    idempotencyKey,
+    itemId,
+    title,
+    category,
+    subcategory,
+    headers,
+    timeoutMs,
+    ...rest
+  } = options
   const payload: Record<string, unknown> = { prompt }
   if (width !== undefined) payload.width = width
   if (height !== undefined) payload.height = height
   if (model !== undefined && model.trim() !== '') payload.model = model.trim()
   if (idempotencyKey !== undefined && idempotencyKey.trim() !== '') {
     payload.idempotencyKey = idempotencyKey.trim()
+  }
+  if (itemId !== undefined && itemId.trim() !== '') payload.itemId = itemId.trim()
+  if (title !== undefined && title.trim() !== '') payload.title = title.trim()
+  if (category !== undefined && category.trim() !== '') payload.category = category.trim()
+  if (subcategory !== undefined && subcategory.trim() !== '') {
+    payload.subcategory = subcategory.trim()
   }
 
   if (image !== undefined) {

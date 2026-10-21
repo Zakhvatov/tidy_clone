@@ -696,11 +696,14 @@ describe('НАЙДЕННЫЕ ДЕФЕКТЫ (регресс-тесты: дефе
       value: vi.fn((blob: Blob) => `blob:${(blob as Blob & { __tag?: string }).__tag ?? 'нет'}`),
     })
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, writable: true, value: vi.fn() })
+    // Генерация в UI больше не ходит без токена: устройство уже настроено.
+    window.localStorage.setItem('tidy.accessToken', 'test-token')
   })
 
   afterEach(async () => {
     await closeDb()
     await deleteDB(DB_NAME)
+    window.localStorage.clear()
     vi.unstubAllGlobals()
   })
 

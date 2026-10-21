@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import {
   ОшибкаРезервнойКопии,
@@ -11,6 +12,7 @@ import {
   type СчётчикиИмпорта,
 } from '../../services/backup'
 import { ErrorNotice } from '../../ui/ErrorNotice'
+import { maskedAccessToken, readAccessToken } from '../../storage/settings'
 import screenStyles from './Screen.module.css'
 import styles from './BackupScreen.module.css'
 
@@ -63,6 +65,7 @@ export function BackupScreen() {
   const [подготовленный, setПодготовленный] = useState<ПодготовленныйИмпорт | null>(null)
   const [итог, setИтог] = useState<ИтогИмпорта | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const accessToken = readAccessToken()
 
   const busy = фаза === 'экспорт' || фаза === 'чтение' || фаза === 'импорт'
 
@@ -214,6 +217,24 @@ export function BackupScreen() {
             {описаниеСчётчиков(итог.обновлено)}; пропущено: {описаниеСчётчиков(итог.пропущено)}.
           </p>
         )}
+      </section>
+
+      <section className={styles.card}>
+        <h2 className={styles.cardTitle}>Доступ к генерации</h2>
+        <p className={styles.cardText}>
+          AI-версии работают по токену доступа. Он выдаётся владельцем приложения и хранится
+          только на этом устройстве.
+        </p>
+        {accessToken === null ? (
+          <p className={styles.tokenStatus}>Токен не задан — генерация попросит его ввести.</p>
+        ) : (
+          <p className={styles.tokenStatus}>
+            Токен сохранён: <code className={styles.token}>{maskedAccessToken(accessToken)}</code>
+          </p>
+        )}
+        <Link className={styles.secondary} to="/access">
+          {accessToken === null ? 'Ввести токен' : 'Изменить токен'}
+        </Link>
       </section>
 
       {ошибка !== null && <ErrorNotice message={ошибка} />}

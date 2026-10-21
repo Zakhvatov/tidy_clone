@@ -35,6 +35,28 @@
       "name": "GENERATION_IMAGE_RATE_LIMITER",
       "namespace_id": "1005",
       "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "ACCESS_RATE_LIMITER",
+      "namespace_id": "1006",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "GENERATIONS_LIST_RATE_LIMITER",
+      "namespace_id": "1007",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "GENERATIONS_IMAGE_RATE_LIMITER",
+      "namespace_id": "1008",
+      "simple": { "limit": 60, "period": 60 }
+    }
+  ],
+  // T22/T23: история успешно скачанных генераций (namespace TIDY_GENERATIONS).
+  "kv_namespaces": [
+    {
+      "binding": "GENERATIONS",
+      "id": "1aa481e7801348c2bde3f88bb658b34d"
     }
   ],
   "vars": {

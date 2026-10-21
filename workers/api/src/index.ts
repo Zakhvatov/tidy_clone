@@ -21,13 +21,21 @@
  * поэтому потерянный ответ не стоит второй оплаты.
  *
  * Маршруты:
+ *   GET  /session                             → {ok:true} (проверка токена доступа)
  *   GET  /models                              → {models:[{slug,title,priceRub}], defaultSlug}
- *   POST /generate  {prompt, model?, imageBase64?, mimeType?, idempotencyKey?}
+ *   POST /generate  {prompt, model?, imageBase64?, mimeType?, idempotencyKey?,
+ *                    itemId?, title?, category?, subcategory?}
  *                                          → 202 {taskId, status, costRub, model}
  *   GET  /generate/{taskId}                  → 200 {taskId, status, costRub}
  *   GET  /generate/{taskId}/image            → байты готового изображения
+ *   GET  /generations                        → {items:[метаданные генераций]}
+ *   GET  /generations/{taskId}/image         → байты сохранённой генерации из KV
  *   POST /classify  {imageBase64, mimeType}   → {category, subcategory, confidence}
  *   GET  /health                              → {ok, generate, classify}
+ *
+ * T22/T23: доступ по токену (`CLIENT_TOKEN` и/или `ACCESS_TOKENS`) и история
+ * генераций в Cloudflare KV (`GENERATIONS`). KV — best-effort кэш: сбой записи
+ * не мешает ни генерации, ни отдаче картинки.
  */
 
 import {
@@ -74,11 +82,28 @@ export interface Env {
   OPENCODE_API_KEY?: string;
   /**
    * Секрет: клиентский токен PWA (`wrangler secret put CLIENT_TOKEN`).
-   * Если не задан — защищённые маршруты отвечают 503 `not_configured`.
+   * Совместимость со старыми клиентами; можно не задавать, если есть `ACCESS_TOKENS`.
+   * Если нет ни одного токена — защищённые маршруты отвечают 503 `not_configured`.
    */
   CLIENT_TOKEN?: string;
+  /**
+   * Секрет: список токенов доступа через запятую (`wrangler secret put ACCESS_TOKENS`).
+   * Пробелы вокруг обрезаются, дубликаты отбрасываются.
+   */
+  ACCESS_TOKENS?: string;
+  /**
+   * KV-хранилище истории генераций (binding `GENERATIONS` в wrangler.jsonc).
+   * Без него история отвечает 503, а запись метаданных пропускается.
+   */
+  GENERATIONS?: KVNamespace;
   /** Список источников через запятую. Переопределяется var-ом `ALLOWED_ORIGINS`. */
   ALLOWED_ORIGINS?: string;
+  /** Лимитер проверки токена `/session` (30 запросов/мин). */
+  ACCESS_RATE_LIMITER?: RateLimitBinding;
+  /** Лимитер списка истории генераций (30 запросов/мин). */
+  GENERATIONS_LIST_RATE_LIMITER?: RateLimitBinding;
+  /** Лимитер превью истории (60 запросов/мин — вкладка грузит несколько картинок). */
+  GENERATIONS_IMAGE_RATE_LIMITER?: RateLimitBinding;
   /** Лимитер создания генерации (5 запросов/мин — каждый кадр стоит денег). */
   GENERATE_RATE_LIMITER?: RateLimitBinding;
   /** Лимитер опроса статуса генерации (60 запросов/мин). */
@@ -402,17 +427,41 @@ function timingSafeTokenEqual(provided: string, expected: string): boolean {
 }
 
 /**
- * Барьер для защищённых маршрутов: клиентский токен PWA.
- * Нет секрета `CLIENT_TOKEN` → 503 `not_configured` (никакого «открыто по умолчанию»),
- * неверный/отсутствующий заголовок → 401 `unauthorized`.
+ * Допустимые токены доступа: `CLIENT_TOKEN` (совместимость) плюс список
+ * `ACCESS_TOKENS` через запятую. Пробелы обрезаются, пустые и дубликаты
+ * отбрасываются — один и тот же токен в двух местах не расширяет перебор.
  */
-async function requireClientToken(request: Request, env: Env): Promise<void> {
-  const expected = env.CLIENT_TOKEN?.trim();
-  if (!expected) {
-    throw new HttpError(503, "not_configured", "Сервис не настроен: не задан CLIENT_TOKEN");
+export function configuredAccessTokens(env: Env): string[] {
+  const candidates = [env.CLIENT_TOKEN, ...(env.ACCESS_TOKENS ?? "").split(",")];
+  const tokens: string[] = [];
+  for (const candidate of candidates) {
+    const token = candidate?.trim();
+    if (!token || tokens.includes(token)) continue;
+    tokens.push(token);
+  }
+  return tokens;
+}
+
+/**
+ * Барьер для защищённых маршрутов: клиентский токен PWA.
+ * Нет ни одного токена → 503 `not_configured` (никакого «открыто по умолчанию»),
+ * неверный/отсутствующий заголовок → 401 `unauthorized`.
+ *
+ * Токен сверяется constant-time со **всеми** допустимыми значениями: цикл не
+ * прерывается на первом совпадении, поэтому по времени нельзя понять, какой
+ * именно токен подошёл.
+ */
+function requireClientToken(request: Request, env: Env): void {
+  const expected = configuredAccessTokens(env);
+  if (expected.length === 0) {
+    throw new HttpError(503, "not_configured", "Сервис не настроен: не задан CLIENT_TOKEN или ACCESS_TOKENS");
   }
   const provided = request.headers.get(CLIENT_TOKEN_HEADER) ?? "";
-  if (!timingSafeTokenEqual(provided, expected)) {
+  let matched = false;
+  for (const token of expected) {
+    matched = timingSafeTokenEqual(provided, token) || matched;
+  }
+  if (!matched) {
     throw new HttpError(401, "unauthorized", "Неверный или отсутствующий клиентский токен");
   }
 }
@@ -428,9 +477,12 @@ async function rateLimitKey(request: Request): Promise<string> {
 }
 
 export type ProtectedRoute =
+  | "access"
   | "generate"
   | "generation_status"
   | "generation_image"
+  | "generations_list"
+  | "generations_image"
   | "classify"
   | "models";
 
@@ -441,18 +493,30 @@ export type ProtectedRoute =
  * У генерации три правила: создание (5/мин, кадр платный), опрос статуса
  * (60/мин — клиент дёргает каждые ~3 с) и скачивание (10/мин — файл один на задачу).
  */
-async function enforceRateLimit(request: Request, env: Env, route: ProtectedRoute): Promise<void> {
+function limiterFor(env: Env, route: ProtectedRoute): RateLimitBinding | undefined {
   const fallback = env.RATE_LIMITER;
-  const limiter =
-    route === "generate"
-      ? env.GENERATE_RATE_LIMITER ?? fallback
-      : route === "generation_status"
-        ? env.GENERATION_STATUS_RATE_LIMITER ?? fallback
-        : route === "generation_image"
-          ? env.GENERATION_IMAGE_RATE_LIMITER ?? fallback
-          : route === "classify"
-            ? env.CLASSIFY_RATE_LIMITER ?? fallback
-            : env.MODELS_RATE_LIMITER ?? fallback;
+  switch (route) {
+    case "access":
+      return env.ACCESS_RATE_LIMITER ?? fallback;
+    case "generate":
+      return env.GENERATE_RATE_LIMITER ?? fallback;
+    case "generation_status":
+      return env.GENERATION_STATUS_RATE_LIMITER ?? fallback;
+    case "generation_image":
+      return env.GENERATION_IMAGE_RATE_LIMITER ?? fallback;
+    case "generations_list":
+      return env.GENERATIONS_LIST_RATE_LIMITER ?? fallback;
+    case "generations_image":
+      return env.GENERATIONS_IMAGE_RATE_LIMITER ?? fallback;
+    case "classify":
+      return env.CLASSIFY_RATE_LIMITER ?? fallback;
+    case "models":
+      return env.MODELS_RATE_LIMITER ?? fallback;
+  }
+}
+
+async function enforceRateLimit(request: Request, env: Env, route: ProtectedRoute): Promise<void> {
+  const limiter = limiterFor(env, route);
   if (!limiter || typeof limiter.limit !== "function") return;
 
   let outcome: { success: boolean };
@@ -469,7 +533,7 @@ async function enforceRateLimit(request: Request, env: Env, route: ProtectedRout
 
 /** Токен проверяем первым: незачем тратить лимит на неаутентифицированные запросы. */
 async function guardProtected(request: Request, env: Env, route: ProtectedRoute): Promise<void> {
-  await requireClientToken(request, env);
+  requireClientToken(request, env);
   await enforceRateLimit(request, env, route);
 }
 
@@ -543,6 +607,323 @@ async function readBytesTimed(
 }
 
 // ---------------------------------------------------------------------------
+// История генераций в KV
+// ---------------------------------------------------------------------------
+
+/** Ключ незавершённой генерации (создана, но файл ещё не скачан). */
+const PENDING_KEY_PREFIX = "pending:";
+/** Ключ сохранённой генерации: байты + metadata для истории. */
+const GENERATION_KEY_PREFIX = "gen:";
+/** TTL pending-записи: 7 дней — за это время клиент либо заберёт файл, либо нет. */
+const PENDING_TTL_SECONDS = 604800;
+/** Лимит metadata у ключа Cloudflare KV. */
+const MAX_KV_METADATA_BYTES = 1024;
+
+/** Пределы полей metadata: длинные значения обрезаем, а не роняем запись. */
+const METADATA_LIMITS = {
+  taskId: 128,
+  title: 120,
+  prompt: 240,
+  model: 120,
+  itemId: 128,
+  category: 60,
+  subcategory: 60,
+} as const;
+
+/** Запись истории: `gen:{taskId}` в KV. Необязательные поля могут отсутствовать. */
+export interface GenerationMetadata {
+  taskId: string;
+  title: string;
+  prompt: string;
+  model: string;
+  costRub: number | null;
+  createdAt: string;
+  itemId?: string;
+  category?: string;
+  subcategory?: string;
+  contentType?: string;
+  size?: number;
+}
+
+/** Обрезка строки по числу символов (не UTF-16 единиц), чтобы не рвать эмодзи. */
+function clampText(value: string, max: number): string {
+  const chars = Array.from(value);
+  return chars.length <= max ? value : chars.slice(0, max).join("");
+}
+
+/**
+ * Необязательное текстовое поле из тела. Старые клиенты его не присылают;
+ * мусор не роняет запрос — просто не попадает в metadata.
+ */
+function readOptionalMetadataText(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length === 0 ? undefined : clampText(trimmed, max);
+}
+
+function metadataBytes(metadata: Record<string, unknown>): number {
+  return new TextEncoder().encode(JSON.stringify(metadata)).length;
+}
+
+/**
+ * Приводит metadata к лимиту KV (1024 байта). Сначала уменьшаем длинные
+ * текстовые поля вдвое, затем отбрасываем необязательные — запись истории
+ * важнее полноты, падать из-за размера нельзя.
+ */
+function fitKvMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  if (metadataBytes(metadata) <= MAX_KV_METADATA_BYTES) return metadata;
+  const fitted: Record<string, unknown> = { ...metadata };
+  const shrinkOrder = ["prompt", "title", "itemId", "category", "subcategory", "model"];
+  for (const field of shrinkOrder) {
+    let value = fitted[field];
+    while (
+      typeof value === "string" &&
+      value.length > 0 &&
+      metadataBytes(fitted) > MAX_KV_METADATA_BYTES
+    ) {
+      const chars = Array.from(value);
+      value = chars.slice(0, Math.floor(chars.length / 2)).join("");
+      fitted[field] = value;
+    }
+    if (metadataBytes(fitted) <= MAX_KV_METADATA_BYTES) return fitted;
+  }
+  for (const field of ["itemId", "category", "subcategory"]) {
+    if (metadataBytes(fitted) <= MAX_KV_METADATA_BYTES) break;
+    delete fitted[field];
+  }
+  return fitted;
+}
+
+/** Собирает metadata генерации с обрезкой полей; необязательные — только если есть. */
+function buildGenerationMetadata(
+  base: {
+    taskId: string;
+    title?: string;
+    prompt?: string;
+    model?: string;
+    costRub: number | null;
+    createdAt: string;
+    contentType?: string;
+    size?: number;
+  },
+  optional: { itemId?: string; category?: string; subcategory?: string } = {},
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    taskId: clampText(base.taskId, METADATA_LIMITS.taskId),
+    title: clampText(base.title ?? "", METADATA_LIMITS.title),
+    prompt: clampText(base.prompt ?? "", METADATA_LIMITS.prompt),
+    model: clampText(base.model ?? "", METADATA_LIMITS.model),
+    costRub: base.costRub,
+    createdAt: base.createdAt,
+  };
+  if (base.contentType) metadata.contentType = base.contentType;
+  if (typeof base.size === "number") metadata.size = base.size;
+  if (optional.itemId) metadata.itemId = clampText(optional.itemId, METADATA_LIMITS.itemId);
+  if (optional.category) metadata.category = clampText(optional.category, METADATA_LIMITS.category);
+  if (optional.subcategory) {
+    metadata.subcategory = clampText(optional.subcategory, METADATA_LIMITS.subcategory);
+  }
+  return fitKvMetadata(metadata);
+}
+
+/** Best-effort запись pending-записи: сбой KV только логируем. */
+async function rememberPendingGeneration(env: Env, metadata: Record<string, unknown>): Promise<void> {
+  const kv = env.GENERATIONS;
+  if (!kv) return;
+  const taskId = typeof metadata.taskId === "string" ? metadata.taskId : "";
+  try {
+    await kv.put(`${PENDING_KEY_PREFIX}${taskId}`, "1", {
+      metadata,
+      expirationTtl: PENDING_TTL_SECONDS,
+    });
+  } catch (error) {
+    console.error(`[tidy-api] KV pending ${taskId}: ${shortError(error)}`);
+  }
+}
+
+/** Metadata pending-записи; отсутствие/сбой KV — null, дефолты соберёт вызывающий. */
+async function readPendingGeneration(env: Env, taskId: string): Promise<Record<string, unknown> | null> {
+  const kv = env.GENERATIONS;
+  if (!kv) return null;
+  try {
+    const result = await kv.getWithMetadata<unknown>(`${PENDING_KEY_PREFIX}${taskId}`);
+    return isRecord(result.metadata) ? result.metadata : null;
+  } catch (error) {
+    console.error(`[tidy-api] KV pending read ${taskId}: ${shortError(error)}`);
+    return null;
+  }
+}
+
+/**
+ * Сохраняет скачанную генерацию в `gen:{taskId}` и убирает pending-запись.
+ * Любая ошибка KV логируется и не мешает вернуть картинку клиенту.
+ */
+async function rememberGeneration(
+  env: Env,
+  taskId: string,
+  bytes: Uint8Array,
+  contentType: string,
+  costRub: number | null,
+): Promise<void> {
+  const kv = env.GENERATIONS;
+  if (!kv) return;
+
+  // Повторное скачивание той же задачи не должно затирать metadata: после
+  // успешной записи pending удалён, и без этой проверки title/category/createdAt
+  // обнулились бы при ретрае потерянного ответа.
+  try {
+    const existing = await kv.getWithMetadata<unknown>(
+      `${GENERATION_KEY_PREFIX}${taskId}`,
+      "arrayBuffer",
+    );
+    if (existing.value !== null) {
+      await kv.delete(`${PENDING_KEY_PREFIX}${taskId}`).catch((error: unknown) => {
+        console.error(`[tidy-api] KV pending delete ${taskId}: ${shortError(error)}`);
+      });
+      return;
+    }
+  } catch (error) {
+    console.error(`[tidy-api] KV generation read ${taskId}: ${shortError(error)}`);
+  }
+
+  const pending = await readPendingGeneration(env, taskId);
+  const createdAt =
+    typeof pending?.createdAt === "string" && pending.createdAt.length > 0
+      ? pending.createdAt
+      : new Date().toISOString();
+  const metadata = buildGenerationMetadata(
+    {
+      taskId,
+      title: typeof pending?.title === "string" ? pending.title : "",
+      prompt: typeof pending?.prompt === "string" ? pending.prompt : "",
+      model:
+        typeof pending?.model === "string" && pending.model.length > 0
+          ? pending.model
+          : providerModel(env),
+      costRub: costRub ?? (typeof pending?.costRub === "number" ? pending.costRub : null),
+      createdAt,
+      contentType,
+      size: bytes.length,
+    },
+    {
+      itemId: typeof pending?.itemId === "string" ? pending.itemId : undefined,
+      category: typeof pending?.category === "string" ? pending.category : undefined,
+      subcategory: typeof pending?.subcategory === "string" ? pending.subcategory : undefined,
+    },
+  );
+  try {
+    await kv.put(`${GENERATION_KEY_PREFIX}${taskId}`, bytes, { metadata });
+    try {
+      await kv.delete(`${PENDING_KEY_PREFIX}${taskId}`);
+    } catch (error) {
+      console.error(`[tidy-api] KV pending delete ${taskId}: ${shortError(error)}`);
+    }
+  } catch (error) {
+    console.error(`[tidy-api] KV generation ${taskId}: ${shortError(error)}`);
+  }
+}
+
+function generationItemFromMetadata(metadata: unknown): GenerationMetadata | null {
+  if (!isRecord(metadata)) return null;
+  const taskId = typeof metadata.taskId === "string" ? metadata.taskId : "";
+  if (taskId.length === 0) return null;
+  const item: GenerationMetadata = {
+    taskId,
+    title: typeof metadata.title === "string" ? metadata.title : "",
+    prompt: typeof metadata.prompt === "string" ? metadata.prompt : "",
+    model: typeof metadata.model === "string" ? metadata.model : "",
+    costRub: typeof metadata.costRub === "number" ? metadata.costRub : null,
+    createdAt: typeof metadata.createdAt === "string" ? metadata.createdAt : "",
+  };
+  if (typeof metadata.itemId === "string") item.itemId = metadata.itemId;
+  if (typeof metadata.category === "string") item.category = metadata.category;
+  if (typeof metadata.subcategory === "string") item.subcategory = metadata.subcategory;
+  if (typeof metadata.contentType === "string") item.contentType = metadata.contentType;
+  if (typeof metadata.size === "number") item.size = metadata.size;
+  return item;
+}
+
+/** Все страницы `list({prefix:"gen:"})`: KV отдаёт историю порциями. */
+async function listGenerationMetadata(kv: KVNamespace): Promise<GenerationMetadata[]> {
+  const items: GenerationMetadata[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    // `include` есть в runtime API, но отсутствует в старых типах workers-types.
+    const options = {
+      prefix: GENERATION_KEY_PREFIX,
+      include: ["metadata"],
+      ...(cursor === undefined ? {} : { cursor }),
+    } as unknown as KVNamespaceListOptions;
+    const page = await kv.list<unknown>(options);
+    for (const key of page.keys) {
+      const item = generationItemFromMetadata(key.metadata);
+      if (item !== null) items.push(item);
+    }
+    if (page.list_complete) break;
+    cursor = page.cursor;
+    if (!cursor) break;
+  }
+  return items;
+}
+
+function compareGenerationsDesc(left: GenerationMetadata, right: GenerationMetadata): number {
+  if (left.createdAt !== right.createdAt) {
+    return left.createdAt < right.createdAt ? 1 : -1;
+  }
+  if (left.taskId === right.taskId) return 0;
+  return left.taskId < right.taskId ? 1 : -1;
+}
+
+async function handleGenerations(request: Request, env: Env): Promise<Response> {
+  const kv = env.GENERATIONS;
+  if (!kv) {
+    throw new HttpError(
+      503,
+      "not_configured",
+      "История генераций недоступна: не настроен binding GENERATIONS",
+    );
+  }
+  const items = await listGenerationMetadata(kv);
+  items.sort(compareGenerationsDesc);
+  return jsonResponse(200, { items }, request, env);
+}
+
+async function handleGenerationHistoryImage(
+  taskId: string,
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const kv = env.GENERATIONS;
+  if (!kv) {
+    throw new HttpError(
+      503,
+      "not_configured",
+      "История генераций недоступна: не настроен binding GENERATIONS",
+    );
+  }
+  const stored = await kv.getWithMetadata<GenerationMetadata>(
+    `${GENERATION_KEY_PREFIX}${taskId}`,
+    "arrayBuffer",
+  );
+  if (stored.value === null) {
+    throw new HttpError(404, "not_found", "Генерация не найдена");
+  }
+  const contentType =
+    typeof stored.metadata?.contentType === "string" &&
+    stored.metadata.contentType.startsWith("image/")
+      ? stored.metadata.contentType
+      : "image/jpeg";
+  return new Response(stored.value, {
+    status: 200,
+    headers: {
+      "content-type": contentType,
+      "cache-control": "private, max-age=31536000, immutable",
+      ...corsHeaders(request, env),
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Маршруты
 // ---------------------------------------------------------------------------
 
@@ -569,6 +950,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         env,
       );
     }
+    if (path === "/session") {
+      if (request.method !== "GET") throw methodNotAllowed("GET");
+      await guardProtected(request, env, "access");
+      return jsonResponse(200, { ok: true }, request, env);
+    }
     if (path === "/models") {
       if (request.method !== "GET") throw methodNotAllowed("GET");
       await guardProtected(request, env, "models");
@@ -589,6 +975,18 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       }
       await guardProtected(request, env, "generation_status");
       return await handleGenerationStatus(taskId, request, env);
+    }
+    if (path === "/generations") {
+      if (request.method !== "GET") throw methodNotAllowed("GET");
+      await guardProtected(request, env, "generations_list");
+      return await handleGenerations(request, env);
+    }
+    const historyImageRoute = /^\/generations\/([^/]+)\/image$/.exec(path);
+    if (historyImageRoute !== null) {
+      if (request.method !== "GET") throw methodNotAllowed("GET");
+      const taskId = readTaskId(historyImageRoute[1] ?? "");
+      await guardProtected(request, env, "generations_image");
+      return await handleGenerationHistoryImage(taskId, request, env);
     }
     if (path === "/classify") {
       if (request.method !== "POST") throw methodNotAllowed("POST");
@@ -1071,6 +1469,13 @@ async function handleGenerate(request: Request, env: Env): Promise<Response> {
   // это 400, а не «провайдер отклонил заголовок».
   const idempotencyKey = readIdempotencyKey(body.idempotencyKey);
 
+  // Необязательные поля вещи для истории генераций. Старые клиенты их не
+  // присылают; мусор просто не попадает в metadata.
+  const title = readOptionalMetadataText(body.title, METADATA_LIMITS.title);
+  const itemId = readOptionalMetadataText(body.itemId, METADATA_LIMITS.itemId);
+  const category = readOptionalMetadataText(body.category, METADATA_LIMITS.category);
+  const subcategory = readOptionalMetadataText(body.subcategory, METADATA_LIMITS.subcategory);
+
   const apiKey = env.ISKRAGEN_API_KEY?.trim();
   if (!apiKey) {
     throw new HttpError(503, "not_configured", "Генерация недоступна: не настроен ключ ISKRAGEN_API_KEY");
@@ -1084,6 +1489,24 @@ async function handleGenerate(request: Request, env: Env): Promise<Response> {
       ? null
       : await uploadInputFile(apiKey, env, inputImage.bytes, inputImage.mime);
   const task = await createGeneration(apiKey, env, rawPrompt, model, inputUrl, idempotencyKey);
+
+  // Pending-запись живёт до скачивания файла: download допишет полную запись
+  // `gen:{taskId}` и удалит её. Сбой KV не должен ломать платную генерацию.
+  await rememberPendingGeneration(
+    env,
+    buildGenerationMetadata(
+      {
+        taskId: task.id,
+        title,
+        prompt: rawPrompt.trim(),
+        model: model.slug,
+        costRub: task.costRub,
+        createdAt: new Date().toISOString(),
+      },
+      { itemId, category, subcategory },
+    ),
+  );
+
   console.log(
     `[tidy-api] POST /generate → 202, задача ${task.id}, ` +
       `модель ${model.slug}, ${Date.now() - started} мс, ` +
@@ -1180,6 +1603,10 @@ async function handleGenerationImage(
   }
 
   const downloaded = await downloadResult(base, apiKey, taskId, IMAGE_DOWNLOAD_TIMEOUT_MS);
+
+  // История — best-effort: ошибка KV логируется и не мешает отдать картинку.
+  await rememberGeneration(env, taskId, downloaded.bytes, downloaded.contentType, state.costRub);
+
   console.log(
     `[tidy-api] GET /generate/${taskId}/image → 200, ${downloaded.bytes.length} байт, ` +
       `стоимость ${state.costRub ?? "?"} ₽`,

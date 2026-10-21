@@ -9,6 +9,7 @@ import { DB_NAME, closeDb } from '../storage/db'
 import * as images from '../storage/images'
 import * as items from '../storage/items'
 import { loadJob } from '../storage/jobs'
+import { clearAccessToken, saveAccessToken } from '../storage/settings'
 import {
   digitizeItem,
   digitizePackshot,
@@ -68,9 +69,12 @@ describe('Оцифровка (T10)', () => {
   beforeEach(async () => {
     await closeDb()
     await deleteDB(DB_NAME)
+    window.localStorage.clear()
+    saveAccessToken('test-token')
   })
 
   afterEach(async () => {
+    clearAccessToken()
     await closeDb()
     await deleteDB(DB_NAME)
   })
@@ -217,9 +221,12 @@ describe('i2i-оцифровка (D13)', () => {
   beforeEach(async () => {
     await closeDb()
     await deleteDB(DB_NAME)
+    window.localStorage.clear()
+    saveAccessToken('test-token')
   })
 
   afterEach(async () => {
+    clearAccessToken()
     await closeDb()
     await deleteDB(DB_NAME)
   })
@@ -288,6 +295,13 @@ describe('i2i-оцифровка (D13)', () => {
       expect(body.prompt).toContain('hoodie')
       expect(body.prompt).toContain('full garment')
       expect(body.prompt).not.toContain('colors:')
+      // Метаданные вещи уходят воркеру для истории генераций (T22).
+      expect(body).toMatchObject({
+        itemId: 'i2i-вещь',
+        title: 'Худи тестовое',
+        category: 'Второй слой',
+        subcategory: 'худи',
+      })
 
       // Цепочка ADR-0006: создание → статус → скачивание отдельным запросом.
       expect(calls.map((c) => c.url)).toEqual([

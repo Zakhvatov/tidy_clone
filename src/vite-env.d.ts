@@ -8,11 +8,6 @@
 interface ImportMetaEnv {
   /** Базовый URL воркера-посредника `tidy-api` (T3). */
   readonly VITE_TIDY_API_URL?: string
-  /**
-   * Клиентский токен воркера `tidy-api` (T3-hardening). Уходит в заголовке
-   * `x-tidy-client`; на воркере сверяется с секретом `CLIENT_TOKEN`.
-   */
-  readonly VITE_TIDY_CLIENT_TOKEN?: string
 }
 
 interface ImportMeta {

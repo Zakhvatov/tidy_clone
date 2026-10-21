@@ -5,6 +5,14 @@
 # В репозиторий секрет не попадает; здесь — только для `wrangler dev` и документации.
 CLIENT_TOKEN=__ЗАМЕНИТЕ_НА_СВОЙ_ТОКЕН__
 
+# Новые токены доступа через запятую (T22): npx wrangler secret put ACCESS_TOKENS
+# Можно задать только ACCESS_TOKENS — CLIENT_TOKEN остаётся для старых клиентов.
+ACCESS_TOKENS=
+
+# История генераций хранится в Cloudflare KV. Это binding, а не секрет:
+# namespace TIDY_GENERATIONS прописан в wrangler.jsonc (`kv_namespaces`).
+# Локально эмуляция KV включается автоматически в `wrangler dev`.
+
 # Ключ генерации IskraGen (https://app.iskragen.ru, раздел «API-ключи»).
 # В проде: npx wrangler secret put ISKRAGEN_API_KEY
 # Локально: этот файл (.dev.vars) в git не попадает.

@@ -40,7 +40,7 @@ import {
  * подготовка изображения и проверка ответа по таксономии. Экспорты ниже
  * сохранены ради обратной совместимости с вызывающим кодом и тестами.
  */
-export { DEFAULT_API_URL, apiBaseUrl, clientTokenFromEnv } from './tidy-api'
+export { DEFAULT_API_URL, apiBaseUrl, resolveClientToken } from './tidy-api'
 /** Ошибка распознавания — тот же класс, что и у клиента воркера (T10). */
 export { TidyApiError as ClassifyError } from './tidy-api'
 export type { TidyApiErrorCode as ClassifyErrorCode } from './tidy-api'
@@ -94,8 +94,9 @@ export interface ClassifyPhotoOptions {
   /** `null` отключает сжатие (среда без canvas): тогда слишком большой файл — ошибка. */
   resize?: ImageResizer | null
   /**
-   * Клиентский токен воркера. По умолчанию берётся из `VITE_TIDY_CLIENT_TOKEN`.
-   * `null` или пустая строка — запрос без заголовка `x-tidy-client` (воркер ответит 401).
+   * Клиентский токен воркера. По умолчанию берётся с устройства
+   * (`storage/settings`). `null` или пустая строка — запрос без заголовка
+   * `x-tidy-client` (воркер ответит 401).
    */
   clientToken?: string | null
 }

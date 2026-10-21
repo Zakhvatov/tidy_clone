@@ -6,11 +6,12 @@ import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { FALLBACK_SUB, subcategoriesOf, topCategories } from '../../domain/taxonomy'
-import type { ImageRole, Изображение, Вещь } from '../../domain/types'
+import type { ImageRole, Season, Изображение, Образ, Вещь } from '../../domain/types'
 import { loadWardrobe } from '../../services/wardrobe'
 import { DB_NAME, closeDb } from '../../storage/db'
 import * as images from '../../storage/images'
 import * as items from '../../storage/items'
+import * as outfits from '../../storage/outfits'
 import { AppRoutes } from '../App'
 
 vi.mock('../../services/wardrobe', async (importOriginal) => {
@@ -47,6 +48,27 @@ function makeImage(
   const blob = new Blob([tag], { type: 'image/png' }) as Blob & { __tag?: string }
   blob.__tag = tag
   return { id, idВещи, роль, blob, ширина: 512, высота: 512, mime: 'image/png', датаСоздания }
+}
+
+function makeOutfit(id: string, сезон: Season, idВещей: string[]): Образ {
+  return {
+    id,
+    название: 'Летний образ',
+    сезон,
+    элементы: idВещей.map((idВещи, index) => ({
+      idВещи,
+      позиция: { x: index * 10, y: index * 10 },
+      масштаб: 1,
+      zПорядок: index,
+    })),
+    датаСоздания: '2024-04-01T00:00:00.000Z',
+  }
+}
+
+function кнопкиВещей(контейнер: HTMLElement): HTMLElement[] {
+  return within(контейнер)
+    .getAllByRole('button')
+    .filter((кнопка) => !кнопка.getAttribute('aria-label')?.startsWith('Удалить вещь «'))
 }
 
 class FakeOffscreenCanvas {
@@ -137,12 +159,14 @@ describe('Экран гардероба (T13)', () => {
       writable: true,
       value: vi.fn(),
     })
+    window.localStorage.setItem('tidy.accessToken', 'test-token')
   })
 
   afterEach(async () => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
     window.sessionStorage.clear()
+    window.localStorage.clear()
     await closeDb()
     await deleteDB(DB_NAME)
   })
@@ -191,10 +215,10 @@ describe('Экран гардероба (T13)', () => {
 
     regions.forEach((region, index) => {
       expect(within(region).getByText(String(counts[index]))).toBeInTheDocument()
-      expect(within(region).getAllByRole('button')).toHaveLength(counts[index])
+      expect(кнопкиВещей(region)).toHaveLength(counts[index])
     })
 
-    const кнопкиСетки = regions.flatMap((region) => within(region).getAllByRole('button'))
+    const кнопкиСетки = regions.flatMap((region) => кнопкиВещей(region))
     expect(кнопкиСетки).toHaveLength(50)
   })
 
@@ -277,7 +301,7 @@ describe('Экран гардероба (T13)', () => {
     renderWardrobe()
 
     const region = await screen.findByRole('region', { name: 'Верх' })
-    expect(within(region).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual([
+    expect(кнопкиВещей(region).map((button) => button.getAttribute('aria-label'))).toEqual([
       'Новая',
       'Старая',
     ])
@@ -668,5 +692,68 @@ describe('Экран гардероба (T13)', () => {
       expect(scrollTo).toHaveBeenCalledWith(0, 412)
     })
     expect(window.sessionStorage.getItem('wardrobe:scrollY')).toBeNull()
+  })
+
+  it('быстрое удаление из сетки: подтверждение, каскад и пустой гардероб', async () => {
+    await items.create(
+      makeItem({ id: 'в-худи', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
+    )
+    await images.addOriginal(
+      makeImage('и-1', 'в-худи', 'оригинал', '2024-01-01T00:00:00.000Z', 'orig'),
+    )
+    await images.addAiVersion(makeImage('и-2', 'в-худи', 'ai', '2024-01-02T00:00:00.000Z', 'ai'))
+
+    renderWardrobe()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Удалить вещь «Худи»' }))
+
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/)
+    const диалог = screen.getByRole('alertdialog', { name: 'Подтверждение удаления' })
+    expect(диалог).toHaveTextContent('«Худи»')
+    expect(within(диалог).getByRole('button', { name: 'Отмена' })).toHaveFocus()
+
+    fireEvent.click(within(диалог).getByRole('button', { name: 'Удалить' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(screen.queryByRole('button', { name: 'Худи' })).toBeNull()
+    expect(await items.get('в-худи')).toBeUndefined()
+    expect(await images.get('и-1')).toBeUndefined()
+    expect(await images.get('и-2')).toBeUndefined()
+    expect(await screen.findByText('Гардероб пуст')).toBeInTheDocument()
+  })
+
+  it('подтверждение из сетки: Escape закрывает и возвращает фокус на кнопку удаления', async () => {
+    await items.create(
+      makeItem({ id: 'в-худи', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
+    )
+
+    renderWardrobe()
+
+    const кнопка = await screen.findByRole('button', { name: 'Удалить вещь «Худи»' })
+    fireEvent.click(кнопка)
+    expect(screen.getByRole('alertdialog', { name: 'Подтверждение удаления' })).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    await waitFor(() => expect(кнопка).toHaveFocus())
+    expect(screen.getByRole('button', { name: 'Худи' })).toBeInTheDocument()
+  })
+
+  it('вещь из образа не удаляется из сетки: причина и вещь на месте', async () => {
+    await items.create(
+      makeItem({ id: 'в-худи', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
+    )
+    await outfits.create(makeOutfit('образ-1', 'лето', ['в-худи']))
+
+    renderWardrobe()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Удалить вещь «Худи»' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/входит в образ «Летний образ»/)
+    expect(screen.getByRole('alertdialog', { name: 'Подтверждение удаления' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Худи' })).toBeInTheDocument()
+    expect(await items.get('в-худи')).toBeDefined()
   })
 })

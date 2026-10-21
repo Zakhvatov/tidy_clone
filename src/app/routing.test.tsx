@@ -20,11 +20,13 @@ describe('Маршрутизация', () => {
   beforeEach(async () => {
     await closeDb()
     await deleteDB(DB_NAME)
+    window.localStorage.clear()
   })
 
   afterEach(async () => {
     await closeDb()
     await deleteDB(DB_NAME)
+    window.localStorage.clear()
   })
 
   it('открывает экран гардероба на /', async () => {
@@ -47,6 +49,12 @@ describe('Маршрутизация', () => {
     expect(screen.getByRole('heading', { name: 'Образы' })).toBeInTheDocument()
     // Список читается из IndexedDB асинхронно (T18).
     expect(await screen.findByText('Образов пока нет')).toBeInTheDocument()
+  })
+
+  it('открывает историю генераций на /generations: без токена — просьба ввести', () => {
+    renderAt('/generations')
+    expect(screen.getByRole('heading', { name: 'Генерации' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ввести токен' })).toHaveAttribute('href', '/access')
   })
 
   it('неизвестный путь уводит на гардероб', () => {

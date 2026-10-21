@@ -12,6 +12,7 @@ import { type ЗадачаГенерации } from '../../storage/jobs'
 import { ОшибкаХранилища } from '../../storage/errors'
 import { digitizeItem } from '../../services/digitize'
 import { ОшибкаГенерации, activeGenerationRun } from '../../services/generation'
+import { TidyApiError } from '../../services/tidy-api'
 import { ErrorNotice } from '../../ui/ErrorNotice'
 import { GenerationModelPicker } from '../../ui/GenerationModelPicker'
 import { GenerationStatus } from '../../ui/GenerationStatus'
@@ -25,7 +26,13 @@ type Phase = 'idle' | 'loading' | 'ready' | 'saving' | 'confirm' | 'generating'
 
 /** Понятный русский текст: свои ошибки показываем как есть, чужие — общим текстом. */
 function сообщениеОбОшибке(error: unknown): string {
-  if (error instanceof ОшибкаИмпортаВещи || error instanceof ОшибкаХранилища) return error.message
+  if (
+    error instanceof ОшибкаИмпортаВещи ||
+    error instanceof ОшибкаХранилища ||
+    error instanceof TidyApiError
+  ) {
+    return error.message
+  }
   return 'Что-то пошло не так. Попробуйте ещё раз'
 }
 

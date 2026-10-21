@@ -21,7 +21,8 @@ jobs:
       # Проект Pages живёт в подкаталоге репозитория.
       BASE_PATH: /tidy_clone/
       VITE_TIDY_API_URL: ${{ vars.VITE_TIDY_API_URL || 'https://tidy-api.megabaff2011.workers.dev' }}
-      VITE_TIDY_CLIENT_TOKEN: ${{ secrets.VITE_TIDY_CLIENT_TOKEN }}
+      # T22: токен доступа не вшивается в бандл — пользователь вводит его один
+      # раз в приложении и приложение хранит его на устройстве.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

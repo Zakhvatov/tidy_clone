@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { FALLBACK_SUB, FALLBACK_TOP } from '../domain/taxonomy'
+import { clearAccessToken, saveAccessToken } from '../storage/settings'
 import {
   ClassifyError,
   DEFAULT_API_URL,
@@ -36,7 +37,13 @@ function smallJpeg(): Blob {
   return new Blob([new Uint8Array([1, 2, 3, 4])], { type: 'image/jpeg' })
 }
 
+beforeEach(() => {
+  window.localStorage.clear()
+  saveAccessToken('test-token')
+})
+
 afterEach(() => {
+  clearAccessToken()
   vi.unstubAllEnvs()
 })
 
@@ -203,12 +210,12 @@ describe('classify-photo: запрос к воркеру', () => {
     expect(headers['x-tidy-client']).toBe('secret-token')
   })
 
-  it('берёт токен из VITE_TIDY_CLIENT_TOKEN, когда явный не передан', async () => {
-    vi.stubEnv('VITE_TIDY_CLIENT_TOKEN', 'env-token')
+  it('берёт токен с устройства, когда явный не передан', async () => {
+    saveAccessToken('device-token')
     const { impl, calls } = fakeFetch(jsonResponse(200, { category: 'Верх', subcategory: 'топ', confidence: 0.5 }))
     await classifyPhoto(smallJpeg(), { fetchImpl: impl })
     const headers = calls[0]?.init?.headers as Record<string, string>
-    expect(headers['x-tidy-client']).toBe('env-token')
+    expect(headers['x-tidy-client']).toBe('device-token')
   })
 
   it('без токена заголовок не отправляется (явно «не настроено»)', async () => {

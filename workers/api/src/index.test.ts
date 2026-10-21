@@ -206,6 +206,119 @@ function iskraSuccessEnv(overrides: Partial<Env> = {}): Env {
   return iskraEnv(overrides);
 }
 
+// ---------------------------------------------------------------------------
+// Fake KV для истории генераций
+// ---------------------------------------------------------------------------
+
+type FakeKvValue = string | Uint8Array | ArrayBuffer;
+
+interface FakeKvEntry {
+  value: FakeKvValue;
+  metadata?: Record<string, unknown> | null;
+  expirationTtl?: number;
+}
+
+function fakeKvBytes(value: FakeKvValue): Uint8Array {
+  if (typeof value === "string") return new TextEncoder().encode(value);
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return value;
+}
+
+function fakeKvArrayBuffer(value: FakeKvValue): ArrayBuffer {
+  const bytes = fakeKvBytes(value);
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
+/**
+ * Минимальная KV-реализация: put/getWithMetadata/delete/list с пагинацией.
+ * Позволяет проверить запись pending/gen, сортировку истории и деградацию
+ * при сбоях (failPut/failRead) без настоящего Cloudflare.
+ */
+class FakeKV {
+  private readonly store = new Map<string, FakeKvEntry>();
+  readonly puts: { key: string; metadata?: Record<string, unknown> | null; expirationTtl?: number }[] = [];
+  readonly deleted: string[] = [];
+  failPut = false;
+  failRead = false;
+  failDelete = false;
+  failList = false;
+  pageSize = 1000;
+
+  seed(key: string, value: FakeKvValue, metadata?: Record<string, unknown>): void {
+    this.store.set(key, { value, metadata });
+  }
+
+  entry(key: string): FakeKvEntry | undefined {
+    return this.store.get(key);
+  }
+
+  async put(
+    key: string,
+    value: FakeKvValue,
+    options?: { metadata?: Record<string, unknown>; expirationTtl?: number },
+  ): Promise<void> {
+    if (this.failPut) throw new Error("kv put failed");
+    this.store.set(key, {
+      value,
+      metadata: options?.metadata,
+      expirationTtl: options?.expirationTtl,
+    });
+    this.puts.push({ key, metadata: options?.metadata, expirationTtl: options?.expirationTtl });
+  }
+
+  async getWithMetadata(
+    key: string,
+    options?: string | { type?: string },
+  ): Promise<{ value: unknown; metadata: Record<string, unknown> | null; cacheStatus: null }> {
+    if (this.failRead) throw new Error("kv read failed");
+    const entry = this.store.get(key);
+    if (!entry) return { value: null, metadata: null, cacheStatus: null };
+    const type = typeof options === "string" ? options : options?.type;
+    if (type === "arrayBuffer") {
+      return { value: fakeKvArrayBuffer(entry.value), metadata: entry.metadata ?? null, cacheStatus: null };
+    }
+    const value =
+      typeof entry.value === "string" ? entry.value : new TextDecoder().decode(fakeKvBytes(entry.value));
+    return { value, metadata: entry.metadata ?? null, cacheStatus: null };
+  }
+
+  async delete(key: string): Promise<void> {
+    if (this.failDelete) throw new Error("kv delete failed");
+    this.store.delete(key);
+    this.deleted.push(key);
+  }
+
+  async list(options?: { prefix?: string | null; cursor?: string | null }): Promise<{
+    list_complete: boolean;
+    keys: { name: string; metadata?: Record<string, unknown> | null }[];
+    cursor?: string;
+    cacheStatus: null;
+  }> {
+    if (this.failList) throw new Error("kv list failed");
+    const prefix = options?.prefix ?? "";
+    const names = [...this.store.keys()].filter((name) => name.startsWith(prefix)).sort();
+    const start = options?.cursor ? Number(options.cursor) : 0;
+    const page = names.slice(start, start + this.pageSize);
+    const complete = start + page.length >= names.length;
+    return {
+      list_complete: complete,
+      keys: page.map((name) => ({ name, metadata: this.store.get(name)?.metadata ?? null })),
+      ...(complete ? {} : { cursor: String(start + page.length) }),
+      cacheStatus: null,
+    };
+  }
+}
+
+function kvEnv(kv: FakeKV, overrides: Partial<Env> = {}): Env {
+  return makeEnv({
+    ISKRAGEN_API_KEY: ISKRA_KEY,
+    GENERATIONS: kv as unknown as KVNamespace,
+    ...overrides,
+  });
+}
+
 function visionResponse(content: string, status = 200): Response {
   return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
     status,
@@ -1422,6 +1535,353 @@ describe("POST /classify: vision-модель", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Токены доступа и /session (T22)
+// ---------------------------------------------------------------------------
+
+describe("токены доступа", () => {
+  it("принимает CLIENT_TOKEN и все токены из ACCESS_TOKENS (trim + dedupe)", async () => {
+    const env = makeEnv({
+      CLIENT_TOKEN: "legacy-token",
+      ACCESS_TOKENS: " alpha, beta ,alpha,, legacy-token ",
+    });
+    for (const token of ["legacy-token", "alpha", "beta"]) {
+      const response = await handleRequest(get("/session", ORIGIN, token), env);
+      expect(response.status, token).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+    }
+    const rejected = await handleRequest(get("/session", ORIGIN, "gamma"), env);
+    expect(rejected.status).toBe(401);
+    expect((await errorBody(rejected)).code).toBe("unauthorized");
+  });
+
+  it("работает без CLIENT_TOKEN, если задан только ACCESS_TOKENS", async () => {
+    const env = makeEnv({ CLIENT_TOKEN: undefined, ACCESS_TOKENS: "only-new" });
+    const response = await handleRequest(get("/session", ORIGIN, "only-new"), env);
+    expect(response.status).toBe(200);
+  });
+});
+
+describe("GET /session", () => {
+  it("с токеном → 200 {ok:true} и CORS", async () => {
+    const response = await handleRequest(get("/session", ORIGIN, CLIENT_TOKEN), makeEnv());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(response.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("без токена → 401 unauthorized", async () => {
+    const response = await handleRequest(get("/session"), makeEnv());
+    expect(response.status).toBe(401);
+    expect((await errorBody(response)).code).toBe("unauthorized");
+  });
+
+  it("без настроенных токенов → 503 not_configured", async () => {
+    const response = await handleRequest(
+      get("/session", ORIGIN, "any"),
+      makeEnv({ CLIENT_TOKEN: undefined, ACCESS_TOKENS: undefined }),
+    );
+    expect(response.status).toBe(503);
+    expect((await errorBody(response)).code).toBe("not_configured");
+  });
+
+  it("POST /session → 405 и Allow: GET", async () => {
+    const response = await handleRequest(post("/session", {}), makeEnv());
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// История генераций (T23)
+// ---------------------------------------------------------------------------
+
+describe("POST /generate: pending-запись в KV", () => {
+  it("пишет pending:{taskId} с metadata и TTL 7 дней", async () => {
+    const kv = new FakeKV();
+    stubProvider({ create: jsonResponse({ id: "gen-7", status: "PENDING", costRub: 7 }, 202) });
+
+    const response = await handleRequest(
+      post("/generate", {
+        prompt: "худи",
+        itemId: "item-1",
+        title: "Худи",
+        category: "Второй слой",
+        subcategory: "худи",
+      }),
+      kvEnv(kv),
+    );
+
+    expect(response.status).toBe(202);
+    const pending = kv.puts.find((put) => put.key === "pending:gen-7");
+    expect(pending).toBeDefined();
+    expect(pending?.expirationTtl).toBe(604800);
+    expect(pending?.metadata).toMatchObject({
+      taskId: "gen-7",
+      title: "Худи",
+      prompt: "худи",
+      model: "gpt-image-2-text-to-image",
+      costRub: 7,
+      itemId: "item-1",
+      category: "Второй слой",
+      subcategory: "худи",
+    });
+    expect(typeof pending?.metadata?.createdAt).toBe("string");
+  });
+
+  it("не требует новых полей у старых клиентов", async () => {
+    const kv = new FakeKV();
+    stubProvider();
+    const response = await handleRequest(post("/generate", { prompt: "hoodie" }), kvEnv(kv));
+    expect(response.status).toBe(202);
+    const pending = kv.puts.find((put) => put.key === "pending:gen-1");
+    expect(pending?.metadata).toMatchObject({ taskId: "gen-1", title: "", prompt: "hoodie" });
+    expect(pending?.metadata).not.toHaveProperty("itemId");
+    expect(pending?.metadata).not.toHaveProperty("category");
+    expect(pending?.metadata).not.toHaveProperty("subcategory");
+  });
+
+  it("обрезает metadata по лимитам и укладывается в 1024 байта", async () => {
+    const kv = new FakeKV();
+    stubProvider({ create: jsonResponse({ id: "gen-8", status: "PENDING", costRub: 1 }, 202) });
+
+    await handleRequest(
+      post("/generate", {
+        prompt: "x".repeat(800),
+        title: "T".repeat(200),
+        itemId: "i".repeat(200),
+        category: "c".repeat(80),
+        subcategory: "s".repeat(80),
+      }),
+      kvEnv(kv),
+    );
+
+    const pending = kv.puts.find((put) => put.key === "pending:gen-8");
+    expect(pending).toBeDefined();
+    expect((pending?.metadata?.title as string).length).toBe(120);
+    expect((pending?.metadata?.prompt as string).length).toBe(240);
+    expect((pending?.metadata?.itemId as string).length).toBe(128);
+    expect((pending?.metadata?.category as string).length).toBe(60);
+    expect((pending?.metadata?.subcategory as string).length).toBe(60);
+    expect(new TextEncoder().encode(JSON.stringify(pending?.metadata)).length).toBeLessThanOrEqual(
+      1024,
+    );
+  });
+
+  it("сбой KV не ломает создание генерации", async () => {
+    const kv = new FakeKV();
+    kv.failPut = true;
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubProvider();
+    try {
+      const response = await handleRequest(post("/generate", { prompt: "hoodie" }), kvEnv(kv));
+      expect(response.status).toBe(202);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("KV pending"));
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
+
+describe("история генераций", () => {
+  const BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0x00, 0x10]);
+
+  it("download сохраняет gen-запись, история её видит, картинка отдаётся", async () => {
+    const kv = new FakeKV();
+    kv.seed("pending:gen-42", "1", {
+      taskId: "gen-42",
+      title: "Худи",
+      prompt: "hoodie",
+      model: "gpt-image-2-text-to-image",
+      costRub: 5,
+      createdAt: "2026-10-20T10:00:00.000Z",
+      itemId: "item-1",
+      category: "Второй слой",
+      subcategory: "худи",
+    });
+    stubProvider({
+      states: [jsonResponse({ id: "gen-42", status: "SUCCEEDED", costRub: 5 })],
+      download: imageResponse(BYTES, "image/jpeg"),
+    });
+    const env = kvEnv(kv);
+
+    const download = await handleRequest(
+      get("/generate/gen-42/image", ORIGIN, CLIENT_TOKEN),
+      env,
+    );
+    expect(download.status).toBe(200);
+    expect(new Uint8Array(await download.arrayBuffer())).toEqual(BYTES);
+
+    const stored = kv.entry("gen:gen-42");
+    expect(stored?.metadata).toMatchObject({
+      taskId: "gen-42",
+      title: "Худи",
+      prompt: "hoodie",
+      model: "gpt-image-2-text-to-image",
+      costRub: 5,
+      createdAt: "2026-10-20T10:00:00.000Z",
+      itemId: "item-1",
+      category: "Второй слой",
+      subcategory: "худи",
+      contentType: "image/jpeg",
+      size: BYTES.length,
+    });
+    expect(kv.deleted).toContain("pending:gen-42");
+
+    const history = await handleRequest(get("/generations", ORIGIN, CLIENT_TOKEN), env);
+    expect(history.status).toBe(200);
+    const items = (await history.json()) as {
+      items: { taskId: string; title: string; contentType: string; size: number }[];
+    };
+    expect(items.items).toHaveLength(1);
+    expect(items.items[0]).toMatchObject({
+      taskId: "gen-42",
+      title: "Худи",
+      contentType: "image/jpeg",
+      size: BYTES.length,
+    });
+
+    const image = await handleRequest(
+      get("/generations/gen-42/image", ORIGIN, CLIENT_TOKEN),
+      env,
+    );
+    expect(image.status).toBe(200);
+    expect(image.headers.get("content-type")).toBe("image/jpeg");
+    expect(image.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(image.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+    expect(new Uint8Array(await image.arrayBuffer())).toEqual(BYTES);
+
+    const missing = await handleRequest(
+      get("/generations/unknown/image", ORIGIN, CLIENT_TOKEN),
+      env,
+    );
+    expect(missing.status).toBe(404);
+    expect((await errorBody(missing)).code).toBe("not_found");
+  });
+
+  it("при падении KV download всё равно отдаёт картинку", async () => {
+    const kv = new FakeKV();
+    kv.failRead = true;
+    kv.failPut = true;
+    const logSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    stubProvider({
+      states: [jsonResponse({ id: "gen-42", status: "SUCCEEDED", costRub: 5 })],
+      download: imageResponse(BYTES, "image/jpeg"),
+    });
+    try {
+      const response = await handleRequest(
+        get("/generate/gen-42/image", ORIGIN, CLIENT_TOKEN),
+        kvEnv(kv),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/jpeg");
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(BYTES);
+      expect(kv.entry("gen:gen-42")).toBeUndefined();
+      expect(logSpy).toHaveBeenCalled();
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("сортирует историю по createdAt desc, при равенстве — по taskId desc", async () => {
+    const kv = new FakeKV();
+    kv.seed("gen:b", "1", {
+      taskId: "b",
+      title: "Б",
+      prompt: "",
+      model: "m",
+      costRub: 1,
+      createdAt: "2026-10-20T10:00:00.000Z",
+    });
+    kv.seed("gen:a", "1", {
+      taskId: "a",
+      title: "А",
+      prompt: "",
+      model: "m",
+      costRub: 1,
+      createdAt: "2026-10-21T10:00:00.000Z",
+    });
+    kv.seed("gen:c", "1", {
+      taskId: "c",
+      title: "Ц",
+      prompt: "",
+      model: "m",
+      costRub: 1,
+      createdAt: "2026-10-20T10:00:00.000Z",
+    });
+
+    const response = await handleRequest(get("/generations", ORIGIN, CLIENT_TOKEN), kvEnv(kv));
+    expect(response.status).toBe(200);
+    const items = (await response.json()) as { items: { taskId: string }[] };
+    expect(items.items.map((item) => item.taskId)).toEqual(["a", "c", "b"]);
+  });
+
+  it("обходит все страницы list()", async () => {
+    const kv = new FakeKV();
+    kv.pageSize = 2;
+    for (const taskId of ["g1", "g2", "g3", "g4", "g5"]) {
+      kv.seed(`gen:${taskId}`, "1", {
+        taskId,
+        title: taskId,
+        prompt: "",
+        model: "m",
+        costRub: null,
+        createdAt: "2026-10-21T10:00:00.000Z",
+      });
+    }
+
+    const response = await handleRequest(get("/generations", ORIGIN, CLIENT_TOKEN), kvEnv(kv));
+    const items = (await response.json()) as { items: { taskId: string }[] };
+    expect(items.items.map((item) => item.taskId)).toEqual(["g5", "g4", "g3", "g2", "g1"]);
+  });
+
+  it("без binding GENERATIONS → 503 not_configured", async () => {
+    const response = await handleRequest(
+      get("/generations", ORIGIN, CLIENT_TOKEN),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(503);
+    expect((await errorBody(response)).code).toBe("not_configured");
+  });
+
+  it("история защищена токеном", async () => {
+    const response = await handleRequest(get("/generations", ORIGIN), kvEnv(new FakeKV()));
+    expect(response.status).toBe(401);
+  });
+
+  it("список и превью используют свои лимитеры", async () => {
+    const listLimiter = { limit: vi.fn(async () => ({ success: false })) };
+    const imageLimiter = { limit: vi.fn(async () => ({ success: false })) };
+    const kv = new FakeKV();
+    kv.seed("gen:gen-1", new Uint8Array([1, 2, 3]), {
+      taskId: "gen-1",
+      title: "",
+      prompt: "",
+      model: "m",
+      costRub: null,
+      createdAt: "2026-10-21T10:00:00.000Z",
+      contentType: "image/png",
+      size: 3,
+    });
+    const env = kvEnv(kv, {
+      GENERATIONS_LIST_RATE_LIMITER: listLimiter,
+      GENERATIONS_IMAGE_RATE_LIMITER: imageLimiter,
+    });
+
+    const list = await handleRequest(get("/generations", ORIGIN, CLIENT_TOKEN), env);
+    expect(list.status).toBe(429);
+    expect(listLimiter.limit).toHaveBeenCalledTimes(1);
+
+    const image = await handleRequest(
+      get("/generations/gen-1/image", ORIGIN, CLIENT_TOKEN),
+      env,
+    );
+    expect(image.status).toBe(429);
+    expect(imageLimiter.limit).toHaveBeenCalledTimes(1);
   });
 });
 
