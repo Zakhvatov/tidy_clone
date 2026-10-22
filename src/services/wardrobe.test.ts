@@ -192,7 +192,7 @@ describe('Чтение гардероба (T13)', () => {
     )
 
     expect(данные).toHaveLength(50)
-    expect(секции).toHaveLength(9)
+    expect(секции).toHaveLength(topCategories().length)
     expect(секции.map((секция) => секция.категория)).toEqual(ожидаемые.map((entry) => entry.top))
     expect(секции.map((секция) => секция.количество)).toEqual(
       ожидаемые.map((entry) => entry.count),

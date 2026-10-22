@@ -1,5 +1,7 @@
 import 'fake-indexeddb/auto'
 
+import { Blob as NodeBlob } from 'node:buffer'
+
 import { deleteDB } from 'idb'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -213,6 +215,46 @@ describe('История генераций (T23)', () => {
     })
     expect((await items.get('вещь-1'))?.idИзображений).toEqual(['ор-1', 'ai-task-1'])
     expect(await items.get('restored-task-1')).toBeUndefined()
+  })
+
+  it('применяет injected transparentize до сохранения и берёт MIME из итогового blob', async () => {
+    await items.create({
+      id: 'вещь-1',
+      название: 'Худи',
+      категория: 'Второй слой',
+      подкатегория: 'худи',
+      цвета: [],
+      состав: [],
+      сезон: [],
+      бренд: '',
+      источник: 'фото',
+      датаСоздания: '2026-10-01T00:00:00.000Z',
+      датаОбновления: '2026-10-01T00:00:00.000Z',
+      idИзображений: [],
+    })
+
+    // fake-indexeddb не понимает jsdom-овый Blob и сохраняет пустой объект;
+    // Node-овый Blob проходит structuredClone как настоящий Blob.
+    vi.stubGlobal('Blob', NodeBlob)
+    try {
+      const прозрачный = new Blob(['transparent'], { type: 'image/png' })
+      const transparentize = vi.fn(async () => прозрачный)
+
+      const итог = await restoreGeneration(makeRecord({ itemId: 'вещь-1' }), {
+        ...baseDeps(),
+        download: async () => new Blob(['raw'], { type: 'image/jpeg' }),
+        transparentize,
+      })
+
+      expect(итог).toEqual({ itemId: 'вещь-1', imageId: 'ai-task-1', created: false })
+      expect(transparentize).toHaveBeenCalledTimes(1)
+      const ai = await images.get('ai-task-1')
+      expect(ai?.mime).toBe('image/png')
+      expect(ai?.blob).toBeInstanceOf(NodeBlob)
+      expect(ai?.blob.size).toBe('transparent'.length)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('восстановление без вещи создаёт новую: id, название, таксономия, источник', async () => {

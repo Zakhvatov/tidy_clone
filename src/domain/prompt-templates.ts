@@ -49,7 +49,7 @@ export interface PromptItem {
  */
 const REQUIRED_SUFFIX =
   'front view, centered, plain pure white background, catalog product photo, ' +
-  'e-commerce product shot, no person, no human model, no mannequin, no text, no watermark'
+  'e-commerce product shot, no person, no human model, no mannequin, no text, no watermark, no shadow'
 
 /**
  * Слова, которые обязаны быть в каждом промпте: визуальные требования из тикета.
@@ -64,6 +64,7 @@ export const REQUIRED_PROMPT_FRAGMENTS: readonly string[] = [
   'no mannequin',
   'no text',
   'no watermark',
+  'no shadow',
 ]
 
 /**
@@ -75,6 +76,8 @@ export const CATEGORY_TEMPLATES: Readonly<Record<string, string>> = {
   Верх: 'full garment, the whole top fully visible in frame, not a fragment or close-up',
   Низ: 'full garment, the whole bottom fully visible in frame, not a fragment or close-up',
   Платья: 'full dress, the whole garment from neckline to hem fully visible in frame',
+  Блузки: 'full blouse, the whole garment fully visible in frame, including sleeves and hem',
+  Комбинезоны: 'full jumpsuit, the whole garment from neckline to hem fully visible in frame',
   'Верхняя одежда':
     'full outerwear item, the whole coat fully visible in frame, including sleeves and hem',
   'Второй слой':
@@ -97,6 +100,8 @@ const TOP_GARMENT: Readonly<Record<string, string>> = {
   Верх: 'top',
   Низ: 'bottoms',
   Платья: 'dress',
+  Блузки: 'blouse',
+  Комбинезоны: 'jumpsuit',
   'Верхняя одежда': 'outerwear',
   'Второй слой': 'cardigan',
   Обувь: 'shoes',
@@ -121,6 +126,9 @@ const SUBCATEGORY_GARMENT: Readonly<Record<string, string>> = {
   // Платья
   платье: 'dress',
   сарафан: 'sundress',
+  // Блузки и комбинезоны
+  блузка: 'blouse',
+  комбинезон: 'jumpsuit',
   // Верхняя одежда
   куртка: 'jacket',
   пальто: 'coat',

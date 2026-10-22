@@ -1,5 +1,7 @@
 import 'fake-indexeddb/auto'
 
+import { Blob as NodeBlob } from 'node:buffer'
+
 import { deleteDB } from 'idb'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -13,6 +15,7 @@ import { clearAccessToken, saveAccessToken } from '../storage/settings'
 import {
   digitizeItem,
   digitizePackshot,
+  saveGeneratedResult,
   type DigitizeDeps,
 } from './digitize'
 
@@ -103,6 +106,35 @@ describe('Оцифровка (T10)', () => {
     // Список изображений вещи ведёт себя честно: только новая AI-версия.
     const вещь = await items.get('вещь-1')
     expect(вещь?.idИзображений).toEqual(['ai-1'])
+  })
+
+  it('saveGeneratedResult сохраняет результат injected transparentize с MIME PNG (ADR-0008)', async () => {
+    await items.create(makeItem({ id: 'вещь-1' }))
+    await images.addOriginal(makeImage('ор-1', 'вещь-1', 'оригинал', 'pack'))
+
+    // fake-indexeddb не понимает jsdom-овый Blob и сохраняет пустой объект;
+    // Node-овый Blob проходит structuredClone как настоящий Blob.
+    vi.stubGlobal('Blob', NodeBlob)
+    try {
+      const прозрачный = new Blob(['png'], { type: 'image/png' })
+      const transparentize = vi.fn(async () => прозрачный)
+
+      const outcome = await saveGeneratedResult('вещь-1', new Blob(['raw'], { type: 'image/jpeg' }), {
+        ...baseDeps(),
+        transparentize,
+        id: () => 'ai-1',
+      })
+
+      expect(outcome).toMatchObject({ way: 'ai', status: 'создано' })
+      expect(transparentize).toHaveBeenCalledTimes(1)
+      const ai = await images.get('ai-1')
+      expect(ai?.mime).toBe('image/png')
+      expect(ai?.blob).toBeInstanceOf(NodeBlob)
+      expect(ai?.blob.size).toBe(3)
+      expect(ai?.blob.type).toBe('image/png')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('вещь из маркетплейса хранит Оригинал: удаляется только загруженный снимок', async () => {

@@ -22,6 +22,7 @@ import type { Изображение, Вещь } from '../domain/types'
 import * as images from '../storage/images'
 import * as items from '../storage/items'
 import { measureImage } from './import-item'
+import { ensureTransparentPng } from './transparent'
 import {
   GENERATION_IMAGE_TIMEOUT_MS,
   TidyApiError,
@@ -71,6 +72,11 @@ export interface RestoreGenerationResult {
  */
 export interface RestoreGenerationDeps {
   download?: (taskId: string) => Promise<Blob>
+  /**
+   * Нормализация прозрачного фона (ADR-0008). По умолчанию — `ensureTransparentPng`;
+   * применяется до измерения и сохранения, MIME берётся из итогового blob.
+   */
+  transparentize?: (blob: Blob) => Promise<Blob>
   measure?: (blob: Blob) => Promise<{ ширина: number; высота: number }>
   now?: () => string
   id?: () => string
@@ -169,7 +175,8 @@ export async function restoreGeneration(
   }
 
   const скачать = options.download ?? ((taskId: string) => downloadHistoryImage(taskId, options))
-  const blob = await скачать(record.taskId)
+  const скачанный = await скачать(record.taskId)
+  const blob = await (options.transparentize ?? ensureTransparentPng)(скачанный)
 
   const измерить = options.measure ?? measureImage
   // 0×0 допустимо: jsdom и старые webview не умеют мерить картинки.

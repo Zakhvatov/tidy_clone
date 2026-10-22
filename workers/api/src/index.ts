@@ -1125,6 +1125,7 @@ function generationParams(
   inputUrl: string | null,
 ): Record<string, string | string[]> {
   const params: Record<string, string | string[]> = { ...frameParams(model) };
+  if (model.transparentBackground) params.background = "transparent";
   if (inputUrl !== null && model.imageInputParam !== null) {
     params[model.imageInputParam] = [inputUrl];
   }
@@ -1315,6 +1316,8 @@ function selectImageModel(value: unknown, env: Env, withInputImage: boolean): Im
         aspectParam: "aspect_ratio" as const,
         supportsResolution: true,
         imageInputParam: null,
+        // Дефолтная i2i-модель каталога умеет нативную прозрачность.
+        transparentBackground: true,
       } satisfies ImageModel);
     console.error(
       `[tidy-api] generate: модель ${model.slug} не принимает референс, подставлена ${replacement.slug}`,
@@ -1335,6 +1338,7 @@ function selectImageModel(value: unknown, env: Env, withInputImage: boolean): Im
         aspectParam: "aspect_ratio",
         supportsResolution: true,
         imageInputParam: null,
+        transparentBackground: false,
       },
     );
   }

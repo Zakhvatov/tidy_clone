@@ -40,6 +40,7 @@ import { MAX_GENERATE_INPUT_BYTES } from './tidy-api'
 import { runGeneration } from './generation'
 import { canvasResize, MAX_IMAGE_SIDE } from './classify-photo'
 import { cutoutBlob, type CutoutBlobResult } from './cutout'
+import { ensureTransparentPng } from './transparent'
 import { measureImage } from './import-item'
 import * as images from '../storage/images'
 import * as items from '../storage/items'
@@ -62,6 +63,11 @@ export interface DigitizeDeps {
   generate?: (вещь: Вещь, reference: Blob, prompt: string, signal?: AbortSignal) => Promise<Blob>
   /** Точный вырез пакшота. По умолчанию — `cutoutBlob` (canvas). */
   cutout?: (blob: Blob) => Promise<CutoutBlobResult>
+  /**
+   * Нормализация фона AI-версии (ADR-0008). По умолчанию — `ensureTransparentPng`:
+   * кадр без альфы прогоняется через white-key вырез. Инжектируется тестами.
+   */
+  transparentize?: (blob: Blob) => Promise<Blob>
   /** Размеры производного изображения. По умолчанию — `measureImage`. */
   measure?: (blob: Blob) => Promise<{ ширина: number; высота: number }>
   /** Текущее время, ISO-8601. Инжектируется для детерминированных тестов. */
@@ -304,7 +310,8 @@ export async function saveGeneratedResult(
     return { itemId, way: 'ai', status: 'уже есть', image: ai }
   }
 
-  const image = await saveDerived(вещь, 'ai', blob, deps, ai?.id)
+  const готовый = await (deps.transparentize ?? ensureTransparentPng)(blob)
+  const image = await saveDerived(вещь, 'ai', готовый, deps, ai?.id)
   await removeUploadedSnapshot(вещь, оригинал)
   await removeJob(itemId)
   return { itemId, way: 'ai', status: 'создано', image }

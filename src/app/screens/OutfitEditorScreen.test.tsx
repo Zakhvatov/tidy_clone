@@ -124,6 +124,76 @@ describe('Редактор коллажа (T16) и пикер вещей (T17)',
     })
   })
 
+  it('масштаб меняется щипком двумя пальцами на вещи', async () => {
+    await items.create(makeItem({ id: 'в-1', название: 'Худи' }))
+    await images.addOriginal(
+      makeImage('о-1', 'в-1', 'оригинал', '2024-01-01T00:00:00.000Z', 'orig'),
+    )
+
+    renderEditor('new')
+    const элемент = await добавитьЧерезПикер('Худи')
+
+    expect(await screen.findByRole('slider', { name: 'Масштаб' })).toHaveValue('100')
+
+    fireEvent.pointerDown(элемент, { pointerId: 1, clientX: 100, clientY: 100 })
+    fireEvent.pointerDown(элемент, { pointerId: 2, clientX: 200, clientY: 100 })
+    fireEvent.pointerMove(элемент, { pointerId: 2, clientX: 300, clientY: 100 })
+
+    expect(screen.getByRole('slider', { name: 'Масштаб' })).toHaveValue('200')
+
+    fireEvent.pointerUp(элемент, { pointerId: 2, clientX: 300, clientY: 100 })
+    fireEvent.pointerUp(элемент, { pointerId: 1, clientX: 100, clientY: 100 })
+
+    expect(screen.getByRole('slider', { name: 'Масштаб' })).toHaveValue('200')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить образ' }))
+
+    await waitFor(async () => {
+      const [сохранённый] = await outfits.list()
+      const элементОбраза = сохранённый?.элементы.find(
+        (элементОбраза) => элементОбраза.idВещи === 'в-1',
+      )
+      expect(элементОбраза?.масштаб).toBe(2)
+    })
+  })
+
+  it('щипок ограничен пределами; pointercancel и отпущенный палец не ломают жест', async () => {
+    await items.create(makeItem({ id: 'в-1', название: 'Худи' }))
+    await images.addOriginal(
+      makeImage('о-1', 'в-1', 'оригинал', '2024-01-01T00:00:00.000Z', 'orig'),
+    )
+
+    renderEditor('new')
+    const элемент = await добавитьЧерезПикер('Худи')
+
+    fireEvent.pointerDown(элемент, { pointerId: 1, clientX: 100, clientY: 100 })
+    fireEvent.pointerDown(элемент, { pointerId: 2, clientX: 200, clientY: 100 })
+    fireEvent.pointerMove(элемент, { pointerId: 2, clientX: 900, clientY: 100 })
+    expect(screen.getByRole('slider', { name: 'Масштаб' })).toHaveValue('250')
+
+    fireEvent.pointerCancel(элемент, { pointerId: 2, clientX: 900, clientY: 100 })
+    fireEvent.pointerMove(элемент, { pointerId: 1, clientX: 200, clientY: 200 })
+    fireEvent.pointerCancel(элемент, { pointerId: 1, clientX: 200, clientY: 200 })
+
+    fireEvent.pointerDown(элемент, { pointerId: 3, clientX: 100, clientY: 100 })
+    fireEvent.pointerDown(элемент, { pointerId: 4, clientX: 300, clientY: 100 })
+    fireEvent.pointerMove(элемент, { pointerId: 4, clientX: 100, clientY: 100 })
+    expect(screen.getByRole('slider', { name: 'Масштаб' })).toHaveValue('30')
+
+    fireEvent.pointerUp(элемент, { pointerId: 3, clientX: 100, clientY: 100 })
+    fireEvent.pointerUp(элемент, { pointerId: 4, clientX: 100, clientY: 100 })
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить образ' }))
+
+    await waitFor(async () => {
+      const [сохранённый] = await outfits.list()
+      const элементОбраза = сохранённый?.элементы.find(
+        (элементОбраза) => элементОбраза.idВещи === 'в-1',
+      )
+      expect(элементОбраза?.масштаб).toBeCloseTo(0.3)
+      expect(элементОбраза?.позиция).not.toEqual(позицияПоУмолчанию(0))
+    })
+  })
+
   it('изменение порядка слоёв и подложки сохраняется', async () => {
     await items.create(
       makeItem({ id: 'в-1', название: 'Платье', категория: 'Платья', подкатегория: 'платье' }),

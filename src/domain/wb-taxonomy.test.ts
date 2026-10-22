@@ -87,6 +87,36 @@ describe('Словарь WB → наша таксономия (T7)', () => {
     })
   })
 
+  it('разводит блузки и комбинезоны в собственные верхние категории (ADR-0007)', () => {
+    for (const subject of ['Блузки', 'Блузки-боди', 'Крестильные рубашки']) {
+      expect(mapWbCategory('Одежда', subject), subject).toMatchObject({
+        top: 'Блузки',
+        sub: 'блузка',
+        needsReview: false,
+        matchedBy: 'root+subject',
+      })
+    }
+    for (const [root, subject] of [
+      ['Одежда', 'Комбинезоны'],
+      ['Одежда', 'Комбинезоны утепленные'],
+      ['Одежда', 'Полукомбинезоны'],
+      ['Спортивная одежда', 'Комбинезоны спортивные'],
+    ] as const) {
+      expect(mapWbCategory(root, subject), subject).toMatchObject({
+        top: 'Комбинезоны',
+        sub: 'комбинезон',
+        needsReview: false,
+        matchedBy: 'root+subject',
+      })
+    }
+    // Купальный комбинезон — не повседневный комбинезон: остаётся в «Разном».
+    expect(mapWbCategory('Белье', 'Комбинезоны купальные')).toMatchObject({
+      top: FALLBACK_TOP,
+      sub: FALLBACK_SUB,
+      needsReview: true,
+    })
+  })
+
   it('знает пример из тикета: «Кеды» → кроссовки', () => {
     expect(mapWbCategory('Обувь', 'Кеды')).toMatchObject({
       top: 'Обувь',
@@ -137,8 +167,13 @@ describe('Словарь WB → наша таксономия (T7)', () => {
   })
 
   it('спорные комплекты уходят в ручной выбор, а не в случайную категорию', () => {
-    for (const subject of ['Костюмы', 'Костюмы спортивные', 'Пижамы', 'Слитные купальники']) {
-      const result = mapWbCategory('Одежда', subject)
+    for (const [root, subject] of [
+      ['Одежда', 'Костюмы'],
+      ['Спортивная одежда', 'Костюмы спортивные'],
+      ['Одежда', 'Пижамы'],
+      ['Белье', 'Слитные купальники'],
+    ] as const) {
+      const result = mapWbCategory(root, subject)
       expect(result.top, subject).toBe(FALLBACK_TOP)
       expect(result.needsReview, subject).toBe(true)
     }
@@ -149,6 +184,18 @@ describe('Словарь WB → наша таксономия (T7)', () => {
     expect(subjects.length).toBeGreaterThan(0)
     expect(subjects).toContain('Костюмы спортивные')
     expect(subjects).toContain('Пижамы')
+    // ADR-0007: блузки и комбинезоны больше не требуют ручного выбора.
+    for (const subject of [
+      'Блузки',
+      'Блузки-боди',
+      'Крестильные рубашки',
+      'Комбинезоны',
+      'Комбинезоны утепленные',
+      'Полукомбинезоны',
+      'Комбинезоны спортивные',
+    ]) {
+      expect(subjects, subject).not.toContain(subject)
+    }
   })
 
   it('knownPairs() повторяет словарь без потерь', () => {

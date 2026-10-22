@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Trash } from '@phosphor-icons/react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import type { Season } from '../../domain/types'
@@ -18,11 +17,9 @@ import {
   preferredImage,
   type WardrobeEntry,
 } from '../../services/wardrobe'
-import { текстОшибкиУдаления } from '../../ui/deleteError'
 import { ErrorNotice } from '../../ui/ErrorNotice'
 import { FilterSheet } from '../../ui/FilterSheet'
 import { useObjectUrl } from '../../ui/useObjectUrl'
-import { remove as удалитьВещь } from '../../storage/items'
 import { AddItemForm } from './AddItemForm'
 import screenStyles from './Screen.module.css'
 import styles from './WardrobeScreen.module.css'
@@ -121,11 +118,9 @@ function WardrobeSkeleton() {
 interface WardrobeCardProps {
   entry: WardrobeEntry
   onOpen: () => void
-  onDelete: () => void
-  registerDelete: (node: HTMLButtonElement | null) => void
 }
 
-function WardrobeCard({ entry, onOpen, onDelete, registerDelete }: WardrobeCardProps) {
+function WardrobeCard({ entry, onOpen }: WardrobeCardProps) {
   const название =
     entry.вещь.название.trim() === '' ? 'Без названия' : entry.вещь.название
   const изображение = preferredImage(entry.вещь, entry.изображения)
@@ -139,131 +134,8 @@ function WardrobeCard({ entry, onOpen, onDelete, registerDelete }: WardrobeCardP
             <img className={styles.image} src={url} alt={название} loading="lazy" decoding="async" />
           )}
         </span>
-        <span className={styles.cardName}>{название}</span>
-      </button>
-      <button
-        ref={registerDelete}
-        className={styles.delete}
-        type="button"
-        aria-label={`Удалить вещь «${название}»`}
-        onClick={onDelete}
-      >
-        <span className={styles.deleteIcon} aria-hidden="true">
-          <Trash size={16} weight="bold" />
-        </span>
       </button>
     </li>
-  )
-}
-
-interface DeleteDialogProps {
-  название: string
-  ошибка: string | null
-  удаляется: boolean
-  onОтмена: () => void
-  onУдалить: () => void
-}
-
-function DeleteDialog({
-  название,
-  ошибка,
-  удаляется,
-  onОтмена,
-  onУдалить,
-}: DeleteDialogProps) {
-  const панель = useRef<HTMLDivElement>(null)
-  const кнопкаОтмены = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    кнопкаОтмены.current?.focus()
-    const предыдущий = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = предыдущий
-    }
-  }, [])
-
-  useEffect(() => {
-    const приКлавише = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        if (!удаляется) onОтмена()
-        return
-      }
-      if (event.key !== 'Tab' || панель.current === null) return
-
-      const кнопки = Array.from(
-        панель.current.querySelectorAll<HTMLButtonElement>('button:not([disabled])'),
-      )
-      if (кнопки.length === 0) {
-        event.preventDefault()
-        панель.current.focus()
-        return
-      }
-
-      const первая = кнопки[0]
-      const последняя = кнопки[кнопки.length - 1]
-      const текущая = document.activeElement
-      if (event.shiftKey && (текущая === первая || текущая === панель.current)) {
-        event.preventDefault()
-        последняя.focus()
-      } else if (!event.shiftKey && текущая === последняя) {
-        event.preventDefault()
-        первая.focus()
-      }
-    }
-
-    document.addEventListener('keydown', приКлавише)
-    return () => document.removeEventListener('keydown', приКлавише)
-  }, [onОтмена, удаляется])
-
-  return (
-    <div
-      className={styles.overlay}
-      onClick={(event) => {
-        if (event.target === event.currentTarget && !удаляется) onОтмена()
-      }}
-    >
-      <div
-        ref={панель}
-        className={styles.dialog}
-        role="alertdialog"
-        aria-modal="true"
-        aria-label="Подтверждение удаления"
-        aria-describedby="удаление-описание"
-        tabIndex={-1}
-      >
-        <h2 className={styles.dialogTitle}>Удалить вещь?</h2>
-        <p className={styles.dialogText} id="удаление-описание">
-          «{название}» исчезнет из гардероба вместе с оригиналом и AI-версией. Отменить это будет
-          нельзя.
-        </p>
-        {ошибка !== null && (
-          <p className={styles.dialogError} role="alert">
-            {ошибка}
-          </p>
-        )}
-        <div className={styles.dialogActions}>
-          <button
-            ref={кнопкаОтмены}
-            className={styles.dialogCancel}
-            type="button"
-            disabled={удаляется}
-            onClick={onОтмена}
-          >
-            Отмена
-          </button>
-          <button
-            className={styles.dialogDelete}
-            type="button"
-            disabled={удаляется}
-            onClick={onУдалить}
-          >
-            {удаляется ? 'Удаляем…' : 'Удалить'}
-          </button>
-        </div>
-      </div>
-    </div>
   )
 }
 
@@ -300,10 +172,6 @@ export function WardrobeScreen() {
   const [фильтр, setФильтр] = useState<WardrobeFilter>(() => фильтрИзПараметров(параметры))
   const [открытыФильтры, setОткрытыФильтры] = useState(false)
   const кнопкаФильтров = useRef<HTMLButtonElement>(null)
-  const [удаляемая, setУдаляемая] = useState<WardrobeEntry | null>(null)
-  const [удаляется, setУдаляется] = useState(false)
-  const [ошибкаУдаления, setОшибкаУдаления] = useState<string | null>(null)
-  const кнопкиУдаления = useRef(new Map<string, HTMLButtonElement>())
 
   useEffect(() => {
     let активен = true
@@ -395,44 +263,6 @@ export function WardrobeScreen() {
   const открытьВещь = (id: string) => {
     сохранитьПрокрутку()
     navigate(`/item/${id}`)
-  }
-
-  const зарегистрироватьКнопкуУдаления = (id: string) => (node: HTMLButtonElement | null) => {
-    if (node === null) {
-      кнопкиУдаления.current.delete(id)
-      return
-    }
-    кнопкиУдаления.current.set(id, node)
-  }
-
-  const открытьУдаление = (entry: WardrobeEntry) => {
-    setОшибкаУдаления(null)
-    setУдаляемая(entry)
-  }
-
-  const закрытьУдаление = useCallback(() => {
-    const id = удаляемая?.вещь.id
-    setУдаляемая(null)
-    setОшибкаУдаления(null)
-    if (id !== undefined) {
-      requestAnimationFrame(() => кнопкиУдаления.current.get(id)?.focus())
-    }
-  }, [удаляемая])
-
-  async function подтвердитьУдаление() {
-    if (удаляемая === null) return
-    const id = удаляемая.вещь.id
-    setУдаляется(true)
-    setОшибкаУдаления(null)
-    try {
-      await удалитьВещь(id)
-      setЗаписи((текущие) => текущие.filter((entry) => entry.вещь.id !== id))
-      setУдаляемая(null)
-    } catch (error) {
-      setОшибкаУдаления(текстОшибкиУдаления(error))
-    } finally {
-      setУдаляется(false)
-    }
   }
 
   const выбратьВерх = (категория: string) => {
@@ -609,8 +439,6 @@ export function WardrobeScreen() {
                     key={entry.вещь.id}
                     entry={entry}
                     onOpen={() => открытьВещь(entry.вещь.id)}
-                    onDelete={() => открытьУдаление(entry)}
-                    registerDelete={зарегистрироватьКнопкуУдаления(entry.вещь.id)}
                   />
                 ))}
               </ul>
@@ -634,27 +462,11 @@ export function WardrobeScreen() {
                   key={entry.вещь.id}
                   entry={entry}
                   onOpen={() => открытьВещь(entry.вещь.id)}
-                  onDelete={() => открытьУдаление(entry)}
-                  registerDelete={зарегистрироватьКнопкуУдаления(entry.вещь.id)}
                 />
               ))}
             </ul>
           </section>
         ))}
-
-      {удаляемая !== null && (
-        <DeleteDialog
-          название={
-            удаляемая.вещь.название.trim() === '' ? 'Без названия' : удаляемая.вещь.название
-          }
-          ошибка={ошибкаУдаления}
-          удаляется={удаляется}
-          onОтмена={закрытьУдаление}
-          onУдалить={() => {
-            void подтвердитьУдаление()
-          }}
-        />
-      )}
     </section>
   )
 }

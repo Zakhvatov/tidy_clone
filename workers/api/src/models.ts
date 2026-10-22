@@ -33,17 +33,22 @@ export interface ImageModel {
   supportsResolution: boolean;
   /** Принимает ли модель референсное изображение и под каким ключом `params`. */
   imageInputParam: ImageInputParam;
+  /**
+   * Нативный прозрачный фон: `params.background = "transparent"`.
+   * Поддерживается только кадром 1K.
+   */
+  transparentBackground: boolean;
 }
 
 /** Модель по умолчанию без картинки: `ISKRAGEN_MODEL_SLUG` или эта. */
 export const DEFAULT_IMAGE_MODEL_SLUG = "gpt-image-2-text-to-image";
 
 /**
- * Модель по умолчанию **с** картинкой — самая дешёвая из принимающих референс.
- * Подставляется, когда картинка пришла, а выбранная модель референс не берёт
- * (например, остался сохранённый выбор из т2и-списка D12).
+ * Модель по умолчанию **с** картинкой — GPT Image 2 с нативным прозрачным
+ * фоном (ADR-0008). Подставляется, когда картинка пришла, а выбранная модель
+ * референс не берёт (например, остался сохранённый выбор из т2и-списка D12).
  */
-export const DEFAULT_IMAGE_TO_IMAGE_MODEL_SLUG = "nano-banana-2-1";
+export const DEFAULT_IMAGE_TO_IMAGE_MODEL_SLUG = "gpt-image-2-image-to-image";
 
 /**
  * IMAGE-модели каталога провайдера. Порядок — от дешёвых к дорогим, чтобы
@@ -58,6 +63,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: true,
     imageInputParam: "image_input",
+    transparentBackground: false,
   },
   {
     slug: "nano-banana-2-lite",
@@ -66,6 +72,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: false,
     imageInputParam: "image_urls",
+    transparentBackground: false,
   },
   {
     slug: "grok-imagine-image-2-0-image-edit",
@@ -74,6 +81,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: false,
     imageInputParam: "image_urls",
+    transparentBackground: false,
   },
   {
     slug: "grok-imagine-image-2-0-text-to-image",
@@ -82,6 +90,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: false,
     imageInputParam: null,
+    transparentBackground: false,
   },
   {
     slug: "grok-imagine-text-to-image",
@@ -90,6 +99,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: false,
     imageInputParam: null,
+    transparentBackground: false,
   },
   {
     slug: "grok-imagine-image-to-image",
@@ -98,6 +108,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: null,
     supportsResolution: false,
     imageInputParam: "image_urls",
+    transparentBackground: false,
   },
   {
     slug: "flux-2-pro-image-to-image",
@@ -106,6 +117,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: true,
     imageInputParam: "input_urls",
+    transparentBackground: false,
   },
   {
     slug: "qwen3-text-to-image",
@@ -114,6 +126,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "image_size",
     supportsResolution: true,
     imageInputParam: null,
+    transparentBackground: false,
   },
   {
     slug: "qwen3-image-to-image",
@@ -122,6 +135,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "image_size",
     supportsResolution: true,
     imageInputParam: "image_urls",
+    transparentBackground: false,
   },
   {
     slug: "gpt-image-2-text-to-image",
@@ -130,6 +144,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: true,
     imageInputParam: null,
+    transparentBackground: true,
   },
   {
     slug: "gpt-image-2-image-to-image",
@@ -138,6 +153,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: true,
     imageInputParam: "input_urls",
+    transparentBackground: true,
   },
   {
     slug: "gpt-image-2-5-flare-text-to-image",
@@ -146,6 +162,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: true,
     imageInputParam: null,
+    transparentBackground: false,
   },
   {
     slug: "gpt-image-2-5-flare-image-to-image",
@@ -154,6 +171,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: null,
     supportsResolution: false,
     imageInputParam: "input_urls",
+    transparentBackground: false,
   },
   {
     slug: "nano-banana-2",
@@ -162,6 +180,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: true,
     imageInputParam: "image_input",
+    transparentBackground: false,
   },
   {
     slug: "midjourney-text-to-image",
@@ -170,6 +189,7 @@ export const IMAGE_MODELS: readonly ImageModel[] = [
     aspectParam: "aspect_ratio",
     supportsResolution: true,
     imageInputParam: null,
+    transparentBackground: false,
   },
 ];
 

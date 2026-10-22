@@ -41,6 +41,19 @@ const ОШИБКА_СОХРАНЕНИЯ = 'Не удалось сохранит�
 /** Сезон образа — одиночный выбор из трёх значений тикета. */
 const СЕЗОНЫ: readonly Season[] = ['зима', 'лето', 'демисезон']
 
+type АктивныйУказатель = { idВещи: string; x: number; y: number }
+
+type Щипок = {
+  idВещи: string
+  начальноеРасстояние: number
+  начальныйМасштаб: number
+  pointerIds: [number, number]
+}
+
+function расстояние(a: АктивныйУказатель, b: АктивныйУказатель): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
 /** Название образа по умолчанию: «Образ от 5 мая». Редактируется вручную. */
 function автоИмя(дата: Date): string {
   const день = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long' }).format(дата)
@@ -120,6 +133,8 @@ export function OutfitEditorScreen() {
 
   const холстRef = useRef<HTMLDivElement>(null)
   const перетаскивание = useRef<{ idВещи: string; x: number; y: number } | null>(null)
+  const указатели = useRef<Map<number, АктивныйУказатель>>(new Map())
+  const щипок = useRef<Щипок | null>(null)
   const кнопкаНазад = useRef<HTMLButtonElement>(null)
   const кнопкаОстаться = useRef<HTMLButtonElement>(null)
 
@@ -236,12 +251,38 @@ export function OutfitEditorScreen() {
     return rect.width / COLLAGE_WIDTH
   }
 
+  /** Указатели, которые сейчас лежат на конкретной вещи. */
+  function указателиВещи(idВещи: string): [number, АктивныйУказатель][] {
+    return [...указатели.current.entries()].filter(([, указатель]) => указатель.idВещи === idВещи)
+  }
+
   function начатьПеретаскивание(
     idВещи: string,
     event: ReactPointerEvent<HTMLButtonElement>,
   ): void {
     setВыбран(idВещи)
-    перетаскивание.current = { idВещи, x: event.clientX, y: event.clientY }
+    указатели.current.set(event.pointerId, {
+      idВещи,
+      x: event.clientX,
+      y: event.clientY,
+    })
+
+    const свои = указателиВещи(idВещи)
+    if (свои.length === 2) {
+      const [[idА, а], [idБ, б]] = свои
+      const элемент = элементы.find((текущий) => текущий.idВещи === idВещи)
+      щипок.current = {
+        idВещи,
+        начальноеРасстояние: расстояние(а, б),
+        начальныйМасштаб: элемент?.масштаб ?? 1,
+        pointerIds: [idА, idБ],
+      }
+      // Пока идёт щипок, вещь не должна уезжать за пальцами.
+      перетаскивание.current = null
+    } else if (свои.length === 1) {
+      перетаскивание.current = { idВещи, x: event.clientX, y: event.clientY }
+    }
+
     setПеретаскивается(true)
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
@@ -251,6 +292,34 @@ export function OutfitEditorScreen() {
   }
 
   function продолжитьПеретаскивание(event: ReactPointerEvent<HTMLButtonElement>): void {
+    const указатель = указатели.current.get(event.pointerId)
+    if (указатель !== undefined) {
+      указатель.x = event.clientX
+      указатель.y = event.clientY
+    }
+
+    const активныйЩипок = щипок.current
+    if (активныйЩипок !== null) {
+      const [idА, idБ] = активныйЩипок.pointerIds
+      const а = указатели.current.get(idА)
+      const б = указатели.current.get(idБ)
+      if (а !== undefined && б !== undefined) {
+        const текущееРасстояние = расстояние(а, б)
+        if (активныйЩипок.начальноеРасстояние > 0) {
+          const масштаб = ограничитьМасштаб(
+            активныйЩипок.начальныйМасштаб *
+              (текущееРасстояние / активныйЩипок.начальноеРасстояние),
+          )
+          setЭлементы((текущие) =>
+            текущие.map((элемент) =>
+              элемент.idВещи === активныйЩипок.idВещи ? { ...элемент, масштаб } : элемент,
+            ),
+          )
+        }
+        return
+      }
+    }
+
     const активное = перетаскивание.current
     if (активное === null) return
     const коэффициент = масштабЭкрана()
@@ -281,14 +350,49 @@ export function OutfitEditorScreen() {
   }
 
   function завершитьПеретаскивание(event: ReactPointerEvent<HTMLButtonElement>): void {
-    if (перетаскивание.current === null) return
-    перетаскивание.current = null
-    setПеретаскивается(false)
+    const указатель = указатели.current.get(event.pointerId)
+    const активныйЩипок = щипок.current
+    if (указатель === undefined && перетаскивание.current === null && активныйЩипок === null) {
+      return
+    }
+
+    указатели.current.delete(event.pointerId)
     try {
       event.currentTarget.releasePointerCapture(event.pointerId)
     } catch {
       // см. начатьПеретаскивание
     }
+
+    if (активныйЩипок !== null) {
+      const свои = указателиВещи(активныйЩипок.idВещи)
+      const отпустилиУчастника = активныйЩипок.pointerIds.includes(event.pointerId)
+      const обаНаМесте = активныйЩипок.pointerIds.every((id) => указатели.current.has(id))
+      if (отпустилиУчастника || !обаНаМесте) {
+        щипок.current = null
+        if (свои.length === 1) {
+          const [, остаток] = свои[0]
+          перетаскивание.current = {
+            idВещи: остаток.idВещи,
+            x: остаток.x,
+            y: остаток.y,
+          }
+        } else {
+          перетаскивание.current = null
+          setПеретаскивается(false)
+        }
+        return
+      }
+    }
+
+    const свои = указателиВещи(указатель?.idВещи ?? перетаскивание.current?.idВещи ?? '')
+    if (свои.length === 1) {
+      const [, остаток] = свои[0]
+      перетаскивание.current = { idВещи: остаток.idВещи, x: остаток.x, y: остаток.y }
+      return
+    }
+
+    перетаскивание.current = null
+    setПеретаскивается(false)
   }
 
   /** Один тап по вещи в пикере добавляет её в коллаж; повторный — только выбирает. */
@@ -528,7 +632,8 @@ export function OutfitEditorScreen() {
 
       {выбранныйЭлемент === null ? (
         <p className={styles.hint} role="status">
-          Выберите вещь на холсте, чтобы изменить масштаб, слой или убрать её
+          Выберите вещь на холсте, чтобы изменить масштаб, слой или убрать её. Масштаб можно
+          менять и двумя пальцами
         </p>
       ) : (
         <section className={styles.controls} aria-label="Выбранная вещь">

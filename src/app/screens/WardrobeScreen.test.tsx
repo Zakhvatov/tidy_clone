@@ -6,12 +6,11 @@ import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { FALLBACK_SUB, subcategoriesOf, topCategories } from '../../domain/taxonomy'
-import type { ImageRole, Season, Изображение, Образ, Вещь } from '../../domain/types'
+import type { ImageRole, Изображение, Вещь } from '../../domain/types'
 import { loadWardrobe } from '../../services/wardrobe'
 import { DB_NAME, closeDb } from '../../storage/db'
 import * as images from '../../storage/images'
 import * as items from '../../storage/items'
-import * as outfits from '../../storage/outfits'
 import { AppRoutes } from '../App'
 
 vi.mock('../../services/wardrobe', async (importOriginal) => {
@@ -50,25 +49,8 @@ function makeImage(
   return { id, idВещи, роль, blob, ширина: 512, высота: 512, mime: 'image/png', датаСоздания }
 }
 
-function makeOutfit(id: string, сезон: Season, idВещей: string[]): Образ {
-  return {
-    id,
-    название: 'Летний образ',
-    сезон,
-    элементы: idВещей.map((idВещи, index) => ({
-      idВещи,
-      позиция: { x: index * 10, y: index * 10 },
-      масштаб: 1,
-      zПорядок: index,
-    })),
-    датаСоздания: '2024-04-01T00:00:00.000Z',
-  }
-}
-
 function кнопкиВещей(контейнер: HTMLElement): HTMLElement[] {
-  return within(контейнер)
-    .getAllByRole('button')
-    .filter((кнопка) => !кнопка.getAttribute('aria-label')?.startsWith('Удалить вещь «'))
+  return within(контейнер).getAllByRole('button')
 }
 
 class FakeOffscreenCanvas {
@@ -202,13 +184,13 @@ describe('Экран гардероба (T13)', () => {
     expect(screen.queryByLabelText('Ссылка на товар')).toBeNull()
   })
 
-  it('50 вещей: 8+1 секция, счётчики и порядок секций по ADR-0004', async () => {
-    const counts = [7, 6, 6, 5, 5, 5, 5, 5, 6]
+  it('50 вещей: 10+1 секция, счётчики и порядок секций по ADR-0004/ADR-0007', async () => {
+    const counts = [5, 5, 5, 4, 4, 4, 4, 4, 4, 5, 6]
     await seedByCounts(counts)
     renderWardrobe()
 
     const regions = await screen.findAllByRole('region')
-    expect(regions).toHaveLength(9)
+    expect(regions).toHaveLength(topCategories().length)
     expect(regions.map((region) => region.getAttribute('aria-label'))).toEqual([
       ...topCategories(),
     ])
@@ -694,66 +676,26 @@ describe('Экран гардероба (T13)', () => {
     expect(window.sessionStorage.getItem('wardrobe:scrollY')).toBeNull()
   })
 
-  it('быстрое удаление из сетки: подтверждение, каскад и пустой гардероб', async () => {
+  it('в сетке нет названия и кнопки удаления, карточка открывает вещь по названию', async () => {
     await items.create(
       makeItem({ id: 'в-худи', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
     )
     await images.addOriginal(
       makeImage('и-1', 'в-худи', 'оригинал', '2024-01-01T00:00:00.000Z', 'orig'),
     )
-    await images.addAiVersion(makeImage('и-2', 'в-худи', 'ai', '2024-01-02T00:00:00.000Z', 'ai'))
 
     renderWardrobe()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Удалить вещь «Худи»' }))
+    const region = await screen.findByRole('region', { name: 'Второй слой' })
+    expect(within(region).queryByRole('button', { name: /^Удалить вещь/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Удалить вещь/ })).toBeNull()
+    expect(region).not.toHaveTextContent('Худи')
 
-    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/)
-    const диалог = screen.getByRole('alertdialog', { name: 'Подтверждение удаления' })
-    expect(диалог).toHaveTextContent('«Худи»')
-    expect(within(диалог).getByRole('button', { name: 'Отмена' })).toHaveFocus()
+    const карточка = within(region).getByRole('button', { name: 'Худи' })
+    fireEvent.click(карточка)
 
-    fireEvent.click(within(диалог).getByRole('button', { name: 'Удалить' }))
-
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
-    expect(screen.queryByRole('button', { name: 'Худи' })).toBeNull()
-    expect(await items.get('в-худи')).toBeUndefined()
-    expect(await images.get('и-1')).toBeUndefined()
-    expect(await images.get('и-2')).toBeUndefined()
-    expect(await screen.findByText('Гардероб пуст')).toBeInTheDocument()
-  })
-
-  it('подтверждение из сетки: Escape закрывает и возвращает фокус на кнопку удаления', async () => {
-    await items.create(
-      makeItem({ id: 'в-худи', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
-    )
-
-    renderWardrobe()
-
-    const кнопка = await screen.findByRole('button', { name: 'Удалить вещь «Худи»' })
-    fireEvent.click(кнопка)
-    expect(screen.getByRole('alertdialog', { name: 'Подтверждение удаления' })).toBeInTheDocument()
-
-    fireEvent.keyDown(document, { key: 'Escape' })
-
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
-    await waitFor(() => expect(кнопка).toHaveFocus())
-    expect(screen.getByRole('button', { name: 'Худи' })).toBeInTheDocument()
-  })
-
-  it('вещь из образа не удаляется из сетки: причина и вещь на месте', async () => {
-    await items.create(
-      makeItem({ id: 'в-худи', название: 'Худи', категория: 'Второй слой', подкатегория: 'худи' }),
-    )
-    await outfits.create(makeOutfit('образ-1', 'лето', ['в-худи']))
-
-    renderWardrobe()
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Удалить вещь «Худи»' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Удалить' }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent(/входит в образ «Летний образ»/)
-    expect(screen.getByRole('alertdialog', { name: 'Подтверждение удаления' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Худи' })).toBeInTheDocument()
-    expect(await items.get('в-худи')).toBeDefined()
+    await waitFor(() => {
+      expect(screen.getByTestId('location')).toHaveTextContent('/item/в-худи')
+    })
   })
 })

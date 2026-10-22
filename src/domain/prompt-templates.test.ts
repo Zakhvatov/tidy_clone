@@ -47,6 +47,30 @@ describe('шаблоны по верхним категориям', () => {
   })
 })
 
+describe('шаблоны «Блузки» и «Комбинезоны» (ADR-0007)', () => {
+  it('блузка получает слово blouse и полноту кадра', () => {
+    expect(garmentWord({ категория: 'Блузки', подкатегория: 'блузка' })).toBe('blouse')
+    expect(garmentWord({ категория: 'Блузки' })).toBe('blouse')
+
+    const prompt = buildGenerationPrompt({ категория: 'Блузки', подкатегория: 'блузка' })
+    expect(prompt).toContain('blouse')
+    expect(prompt).toContain('full blouse')
+  })
+
+  it('комбинезон получает слово jumpsuit и полноту кадра от горловины до подола', () => {
+    expect(garmentWord({ категория: 'Комбинезоны', подкатегория: 'комбинезон' })).toBe('jumpsuit')
+    expect(garmentWord({ категория: 'Комбинезоны' })).toBe('jumpsuit')
+
+    const prompt = buildGenerationPrompt({
+      категория: 'Комбинезоны',
+      подкатегория: 'комбинезон',
+    })
+    expect(prompt).toContain('jumpsuit')
+    expect(prompt).toContain('full jumpsuit')
+    expect(prompt).toContain('from neckline to hem')
+  })
+})
+
 describe('buildGenerationPrompt', () => {
   it('каждая вещь получает все обязательные требования кадра', () => {
     for (const [top, subs] of Object.entries(TAXONOMY)) {

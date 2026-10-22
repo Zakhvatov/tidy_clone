@@ -15,8 +15,10 @@ import {
   MAX_GENERATE_INPUT_BYTES,
 } from "./config";
 import {
+  CLASSIFY_SYSTEM_PROMPT,
   FALLBACK_CATEGORY,
   FALLBACK_SUBCATEGORY,
+  TAXONOMY,
   classifyFromModel,
   isKnownCategory,
   isKnownSubcategory,
@@ -807,7 +809,7 @@ describe("POST /generate: асинхронный запуск (ADR-0006)", () =>
     expect(sent).toEqual({
       modelSlug: "gpt-image-2-text-to-image",
       prompt: "hoodie",
-      params: { aspect_ratio: "1:1", resolution: "1K" },
+      params: { aspect_ratio: "1:1", resolution: "1K", background: "transparent" },
     });
     expect(sent).not.toHaveProperty("width");
     expect(sent).not.toHaveProperty("height");
@@ -1213,16 +1215,17 @@ describe("POST /generate: входное изображение", () => {
 
     expect(sentBody(fetchMock)).toEqual({
       // Конфигурация указывает на gpt-image-2-text-to-image — она не берёт
-      // референс, поэтому воркер подставил дешёвую i2i-модель.
-      modelSlug: "nano-banana-2-1",
+      // референс, поэтому воркер подставил дефолтную i2i-модель.
+      modelSlug: "gpt-image-2-image-to-image",
       prompt: "hoodie",
       params: {
         aspect_ratio: "1:1",
         resolution: "1K",
-        image_input: ["https://files.iskragen.test/in-ref"],
+        background: "transparent",
+        input_urls: ["https://files.iskragen.test/in-ref"],
       },
     });
-    expect(response.headers.get("x-tidy-model")).toBe("nano-banana-2-1");
+    expect(response.headers.get("x-tidy-model")).toBe("gpt-image-2-image-to-image");
   });
 
   it("явно выбранная i2i-модель получает свой ключ референса", async () => {
@@ -1244,9 +1247,39 @@ describe("POST /generate: входное изображение", () => {
       params: {
         aspect_ratio: "1:1",
         resolution: "1K",
+        background: "transparent",
         input_urls: ["https://files.iskragen.test/in-ref"],
       },
     });
+  });
+
+  it("модели без нативной прозрачности не получают background", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(
+      post("/generate", {
+        prompt: "hoodie",
+        imageBase64: "AAAA",
+        mimeType: "image/jpeg",
+        model: "nano-banana-2-1",
+      }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(202);
+    const body = sentBody(fetchMock);
+    expect(body).toMatchObject({ modelSlug: "nano-banana-2-1" });
+    expect((body.params as Record<string, unknown>).background).toBeUndefined();
+  });
+
+  it("т2и-модель без нативной прозрачности не получает background", async () => {
+    const fetchMock = stubProvider();
+    const response = await handleRequest(
+      post("/generate", { prompt: "hoodie", model: "qwen3-text-to-image" }),
+      iskraEnv(),
+    );
+    expect(response.status).toBe(202);
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect(body).toMatchObject({ modelSlug: "qwen3-text-to-image" });
+    expect((body.params as Record<string, unknown>).background).toBeUndefined();
   });
 
   it("сохранённый т2и-выбор с картинкой заменяется и об этом пишется в лог", async () => {
@@ -1262,7 +1295,7 @@ describe("POST /generate: входное изображение", () => {
         }),
         iskraEnv(),
       );
-      expect(sentBody(fetchMock).modelSlug).toBe("nano-banana-2-1");
+      expect(sentBody(fetchMock).modelSlug).toBe("gpt-image-2-image-to-image");
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("не принимает референс"));
     } finally {
       logSpy.mockRestore();
@@ -1890,11 +1923,13 @@ describe("история генераций", () => {
 // ---------------------------------------------------------------------------
 
 describe("таксономия", () => {
-  it("содержит 8 верхних категорий ADR-0004 и «Разное» — как корневая таксономия", () => {
+  it("содержит 10 верхних категорий ADR-0004/ADR-0007 и «Разное» — как корневая таксономия", () => {
     expect(topCategories()).toEqual([
       "Верх",
       "Низ",
       "Платья",
+      "Блузки",
+      "Комбинезоны",
       "Верхняя одежда",
       "Второй слой",
       "Обувь",
@@ -1902,6 +1937,31 @@ describe("таксономия", () => {
       "Бельё",
       FALLBACK_CATEGORY,
     ]);
+  });
+
+  it("ADR-0007: блузки и комбинезоны есть в таксономии, промпте и классификации", () => {
+    expect(TAXONOMY).toEqual({
+      Верх: ["лонгслив", "футболка", "топ", "кроп-топ", "рубашка", "свитер"],
+      Низ: ["джинсы", "брюки", "шорты", "юбка"],
+      Платья: ["платье", "сарафан"],
+      Блузки: ["блузка"],
+      Комбинезоны: ["комбинезон"],
+      "Верхняя одежда": ["куртка", "пальто", "пуховик", "пиджак", "тренч"],
+      "Второй слой": ["кардиган", "жилет", "худи"],
+      Обувь: ["кроссовки", "ботинки", "сапоги", "туфли", "сандалии"],
+      Аксессуары: ["сумка", "ремень", "шапка", "шарф", "украшения", "очки"],
+      Бельё: ["бюстгальтер", "трусы", "носки", "колготки"],
+    });
+    expect(subcategoriesOf("Блузки")).toEqual(["блузка"]);
+    expect(subcategoriesOf("Комбинезоны")).toEqual(["комбинезон"]);
+    expect(CLASSIFY_SYSTEM_PROMPT).toContain("Блузки: блузка");
+    expect(CLASSIFY_SYSTEM_PROMPT).toContain("Комбинезоны: комбинезон");
+    expect(
+      classifyFromModel({ category: "Блузки", subcategory: "блузка", confidence: 0.9 }),
+    ).toEqual({ category: "Блузки", subcategory: "блузка", confidence: 0.9 });
+    expect(
+      classifyFromModel({ category: "Комбинезоны", subcategory: "комбинезон", confidence: 0.8 }),
+    ).toEqual({ category: "Комбинезоны", subcategory: "комбинезон", confidence: 0.8 });
   });
 
   it("согласована с корнем: у «Разное» есть подкатегория и это известная категория", () => {
